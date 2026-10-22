@@ -1,0 +1,1 @@
+{"max_len": 50, "pad_id": 0, "unk_id": 1, "padding": "pre", "truncation": "keep_first_max_len_tokens"}

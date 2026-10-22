@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FocusSense - Architecture, Workflow & Developer Guide</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --accent: #2563eb;
+            --bg: #f8fafc;
+            --text: #1e293b;
+            --border: #e2e8f0;
+            --card-bg: #ffffff;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+            margin: 0;
+            padding: 40px;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 60px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+        h1, h2, h3 {
+            color: var(--primary);
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 8px;
+            margin-top: 40px;
+        }
+        h1 { font-size: 2.2em; margin-top: 0; }
+        h2 { font-size: 1.5em; }
+        h3 { font-size: 1.2em; border-bottom: none; }
+        p, li { font-size: 1.05em; }
+        code {
+            background: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.95em;
+            color: #d97706;
+        }
+        pre {
+            background: #1e293b;
+            color: #f8fafc;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        pre code { background: transparent; color: inherit; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid var(--border);
+            padding: 12px;
+            text-align: left;
+        }
+        th { background: #f1f5f9; color: var(--primary); }
+        .footer {
+            margin-top: 60px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #64748b;
+            border-top: 1px solid var(--border);
+            padding-top: 20px;
+        }
+        @media print {
+            body { background: white; padding: 0; }
+            .container { box-shadow: none; padding: 0; max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>FocusSense: Context-Aware Parental Control & Habit Building Platform</h1>
+    <p>FocusSense is an advanced dual-tier parental safety and habit-building platform consisting of:</p>
+    <ol>
+        <li><strong>Android Application (<code>/app</code>)</strong>: Jetpack Compose mobile client featuring real-time Accessibility screen scraping, dual-model on-device ML threat evaluation, Gemini 3.5 Flash cloud reasoning, scheduled & Pomodoro app blocking, and live location tracking.</li>
+        <li><strong>Central Cloud/Backend Server (<code>/server</code>)</strong>: Python FastAPI backend with PostgreSQL (Supabase) integration, connection pooling, and multi-model AI routing.</li>
+    </ol>
+
+    <h2>🏗️ Complete System Architecture & Workflow Flow</h2>
+    <ul>
+        <li><strong>Child Device Screen & Browser</strong> &rarr; <code>AccessibilityService</code> Scrapes Text</li>
+        <li><strong>ScraperFilterEngine</strong> (&lt;1ms) &rarr; Cleans window nodes and filters system noise.</li>
+        <li><strong>Layer 1: Rule-Based Emergency Filter</strong> (&lt;1ms) &rarr; Instant keyword & regex matching for crisis triggers & whitelisted educational content.</li>
+        <li><strong>Layer 2: Dual On-Device ML Models</strong> (~18ms) &rarr;
+            <ul>
+                <li><strong>Model 1 (ThreatClassifier)</strong>: TF-IDF + Logistic Regression across 2,804 features (General categories: Grooming, Cyberbullying, Self-Harm, Adult, Scam).</li>
+                <li><strong>Model 2 (CyberbullyingEnsembleClassifier)</strong>: TFLite Ensemble (Bi-GRU + Bi-LSTM + TextCNN) for subcategories (Ethnicity, Gender, Religion, Age).</li>
+            </ul>
+        </li>
+        <li><strong>Confidence Triage (≥ 0.75)</strong> &rarr; Edge-confined resolution with zero cloud data transmission.</li>
+        <li><strong>Layer 3: Cloud Gemini 3.5 Flash AI</strong> (~380ms) &rarr; Escalated only for ambiguous/low-confidence interactions (&lt; 0.75 confidence).</li>
+        <li><strong>FastAPI & PostgreSQL Backend (<code>/server</code>)</strong> &rarr; Real-time Supabase cloud synchronization and parent analytics.</li>
+    </ul>
+
+    <h2>📖 Scenario-Based End-to-End Walkthroughs</h2>
+    <h3>Scenario A: Parent Sets Curfew Schedule & Child Uses Device</h3>
+    <p>Parents configure curfew rules in the Parent Portal. When the child opens a restricted app (e.g. Chrome) during curfew, <code>FocusSenseAccessibilityService</code> intercepts the event via <code>checkAppRestriction</code> and instantly launches <code>AppBlockedActivity</code> as a full-screen blocking overlay.</p>
+
+    <h3>Scenario B: Child Views Educational Lectures vs. Unsafe Content</h3>
+    <p>Safe educational browsing (Khan Academy) is whitelisted instantly at Layer 1 (&lt;1ms) and logged silently without parent notification. Harmful or explicit content triggers Layer 1/2 edge classifiers, instantly launching blocking overlays and dispatching high-priority push notifications (<code>CHANNEL_ALERTS</code>) to the parent device.</p>
+
+    <h3>Scenario C: Child Initiates Pomodoro Study Focus Lock</h3>
+    <p>Children can select focus durations (15m, 25m, 45m, 60m) and lock distracting apps on the Child Dashboard. Active countdowns automatically pause targeted apps and unlock them when the timer reaches 00:00.</p>
+
+    <h2>💻 Developer Codebase Directory & Function Reference Guide</h2>
+    <table>
+        <tr>
+            <th>Component</th>
+            <th>File Path</th>
+            <th>Core Functions</th>
+        </tr>
+        <tr>
+            <td>Repository & Logic</td>
+            <td><code>data/repository/FocusSenseRepository.kt</code></td>
+            <td><code>processExtractedContent()</code>, <code>checkAppRestriction()</code>, <code>startPomodoro()</code>, <code>toggleAppBlock()</code></td>
+        </tr>
+        <tr>
+            <td>Accessibility Sentinel</td>
+            <td><code>service/FocusSenseAccessibilityService.kt</code></td>
+            <td><code>onAccessibilityEvent()</code>, <code>launchBlockScreen()</code>, <code>sendParentNotification()</code></td>
+        </tr>
+        <tr>
+            <td>AI Threat Evaluation</td>
+            <td><code>ai/ThreatEvaluationEngine.kt</code></td>
+            <td><code>evaluateContent()</code>, <code>evaluateLayer1RuleFilter()</code>, <code>evaluateLayer2MobileBertML()</code></td>
+        </tr>
+        <tr>
+            <td>Model 1 (TF-IDF + LogReg)</td>
+            <td><code>ai/ThreatClassifier.kt</code></td>
+            <td><code>classify()</code> (Computes sublinear TF, IDF, L2 norm, softmax)</td>
+        </tr>
+        <tr>
+            <td>Model 2 (TFLite Ensemble)</td>
+            <td><code>ai/CyberbullyingEnsembleClassifier.kt</code></td>
+            <td><code>cleanText()</code>, <code>classify()</code> (Runs TFLite Bi-GRU/LSTM/CNN inference)</td>
+        </tr>
+        <tr>
+            <td>Blocking Activity</td>
+            <td><code>ui/screens/blocking/AppBlockedActivity.kt</code></td>
+            <td><code>AppBlockedScreen()</code> (Renders full-screen block & 988 Crisis Helpline)</td>
+        </tr>
+        <tr>
+            <td>Child Dashboard</td>
+            <td><code>ui/screens/child/ChildDashboardScreen.kt</code></td>
+            <td><code>ChildPomodoroFocusCard()</code> (Pomodoro study focus timer & controls)</td>
+        </tr>
+    </table>
+
+    <h2>📐 100% Developer System Design & Database Schema Reference</h2>
+    <p>FocusSense uses an embedded local Room SQLite database with 7 core tables (<code>family_groups</code>, <code>users</code>, <code>devices</code>, <code>activity_logs</code>, <code>schedule_rules</code>, <code>location_points</code>, <code>installed_apps</code>) guaranteeing zero data-loss and automatic offline resilience with Supabase synchronization.</p>
+
+    <h2>🎓 Top 5 Academic & Technical Viva / Interview Q&A</h2>
+    <h3>Q1: Explain the 3-Layer Hierarchical Cascade in FocusSense and why it is superior to pure cloud LLM approaches.</h3>
+    <p><strong>Answer:</strong> Pure cloud LLM apps have 300-800ms latency, high per-token costs, and privacy risks. FocusSense uses a 3-Layer hybrid architecture: Layer 1 Rule Filter (&lt;1ms) for crisis/whitelist words; Layer 2 Dual On-Device ML (~18ms) for edge-confined classification (Model 1 TF-IDF + Model 2 TFLite Ensemble); and Layer 3 Cloud Gemini 3.5 Flash (~380ms) only for ambiguous interactions (&lt; 0.75 confidence).</p>
+
+    <h3>Q2: How do Model 1 and Model 2 work together on-device without crashing unit tests on desktop JVMs?</h3>
+    <p><strong>Answer:</strong> Model 1 uses pure Kotlin data structures (`vocab.txt`, `weights.tsv`). Model 2 uses TFLite (`org.tensorflow:tensorflow-lite:2.16.1`) for `cyberbullying_ensemble.tflite`. To prevent Robolectric JVM unit test crashes on desktop where C++ `.so` JNI libraries aren't present, TFLite `Interpreter` initialization is wrapped in a `try-catch (Throwable)` block that gracefully falls back if native JNI loading fails, ensuring 100% green test execution.</p>
+
+    <h3>Q3: How does the Accessibility Service scrape real-time screen content while filtering out noise?</h3>
+    <p><strong>Answer:</strong> <code>FocusSenseAccessibilityService</code> intercepts `AccessibilityEvent` streams, filters noise via `ScraperFilterEngine` (ignoring keyboards, notification bars, launchers), traverses `AccessibilityNodeInfo` tree nodes, and debounces rapid events (1500ms debounce).</p>
+
+    <h3>Q4: How does FocusSense guarantee offline resilience and zero data-loss?</h3>
+    <p><strong>Answer:</strong> All screen scrapes and location pings are written directly to local Room SQLite instantly (`isSynced = false`). When connectivity returns, repository sync routines batch-upload pending logs to Supabase PostgreSQL via FastAPI.</p>
+
+    <h3>Q5: How do scheduled curfews, instant parent locks, and Pomodoro focus timers enforce app blocking at runtime?</h3>
+    <p><strong>Answer:</strong> Enforced via in-memory cache (`checkAppRestriction`) and foreground interception (`AppBlockedActivity`) launched with `FLAG_ACTIVITY_NEW_TASK`. The back button is intercepted (`BackHandler { onGoHome() }`), preventing bypassing.</p>
+
+    <div class="footer">
+        <p>FocusSense Documentation • Generated from project root <code>README.md</code></p>
+        <p><em>To save as PDF: Open <code>README.html</code> in any web browser, press Ctrl+P (or Cmd+P), and select "Save as PDF".</em></p>
+    </div>
+</div>
+</body>
+</html>

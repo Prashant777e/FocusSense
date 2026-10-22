@@ -1,0 +1,6 @@
+{
+  "name": "FocusSense",
+  "description": "Context-aware parental control and habit building platform with real-time text extraction, vulnerability classification, scheduled app blocking, and live location safety.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

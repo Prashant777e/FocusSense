@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">FocusSense</string>
+    <string name="accessibility_service_description">FocusSense Content Sentinel: extracts on-screen context to protect children from inappropriate and harmful content in allowed apps.</string>
+</resources>

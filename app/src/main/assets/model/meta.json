@@ -1,0 +1,26 @@
+{
+    "algorithm": "LogisticRegression",
+    "vectorizer": "TfidfVectorizer",
+    "classes": [
+        "ADULT_CONTENT",
+        "CYBERBULLYING",
+        "GROOMING",
+        "SAFE_EDUCATIONAL",
+        "SAFE_GENERAL",
+        "SCAM_PHISHING",
+        "SELF_HARM_VIOLENCE",
+        "SOCIAL_NORMAL"
+    ],
+    "num_features": 2804,
+    "num_classes": 8,
+    "ngram_range": [
+        1,
+        2
+    ],
+    "lowercase": true,
+    "sublinear_tf": true,
+    "norm": "l2",
+    "use_idf": true,
+    "smooth_idf": true,
+    "token_pattern": "(?u)\\b\\w\\w+\\b"
+}
