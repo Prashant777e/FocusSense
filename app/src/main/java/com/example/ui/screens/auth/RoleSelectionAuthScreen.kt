@@ -698,7 +698,7 @@ private fun ParentAuthView(
     // Sign Up fields
     var fullName by remember { mutableStateOf("") }
     var familyName by remember { mutableStateOf("") }
-    var securityPin by remember { mutableStateOf("1234") }
+    var securityPin by remember { mutableStateOf("") }
 
     var showServerSettings by remember { mutableStateOf(false) }
     var serverStatusMsg by remember { mutableStateOf<String?>(null) }
@@ -970,11 +970,11 @@ private fun ParentAuthView(
 
             Button(
                 onClick = {
-                    if (fullName.isNotBlank() && email.isNotBlank() && password.isNotBlank()) {
+                    if (fullName.isNotBlank() && email.isNotBlank() && password.isNotBlank() && securityPin.length >= 4) {
                         onSignUp(fullName.trim(), familyName.trim(), email.trim(), password, securityPin)
                     }
                 },
-                enabled = !isAuthLoading && fullName.isNotBlank() && email.isNotBlank() && password.isNotBlank(),
+                enabled = !isAuthLoading && fullName.isNotBlank() && email.isNotBlank() && password.isNotBlank() && securityPin.length >= 4,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)

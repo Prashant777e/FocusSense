@@ -76,6 +76,13 @@ class FocusSenseAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        val app = application as? FocusSenseApplication ?: return
+        val currentUser = app.repository.currentUser.value
+        if (currentUser?.role.equals("parent", ignoreCase = true)) {
+            // Parent devices must never be restricted, blocked, or monitored for blocking rules
+            return
+        }
+
         val pkgName = event.packageName?.toString() ?: return
 
         if (pkgName != lastPkgName) {
@@ -95,12 +102,12 @@ class FocusSenseAccessibilityService : AccessibilityService() {
             return
         }
 
-        val app = application as? FocusSenseApplication ?: return
         val currentChildId = app.repository.selectedChildId.value
 
         // 1. Instant Synchronous Check (0ms latency from in-memory cache)
         val appLabel = getAppLabel(pkgName)
-        if (app.repository.isPackageBlockedSync(pkgName)) {
+        val isParent = app.repository.currentUser.value?.role == "parent"
+        if (!isParent && app.repository.isPackageBlockedSync(pkgName)) {
             launchBlockScreen(
                 packageName = pkgName,
                 appName = appLabel,
@@ -114,17 +121,20 @@ class FocusSenseAccessibilityService : AccessibilityService() {
 
         // 2. Curfew & Schedule Enforcement Check
         scope.launch {
-            val restriction = app.repository.checkAppRestriction(currentChildId, pkgName)
-            if (restriction.isBlocked) {
-                _lastBlockedApp.value = restriction.restrictedAppName
-                withContext(Dispatchers.Main) {
-                    launchBlockScreen(
-                        packageName = pkgName,
-                        appName = appLabel,
-                        ruleName = restriction.ruleName,
-                        category = restriction.category,
-                        endTime = restriction.endTime
-                    )
+            val isParent = app.repository.currentUser.value?.role == "parent"
+            if (!isParent) {
+                val restriction = app.repository.checkAppRestriction(currentChildId, pkgName)
+                if (restriction.isBlocked) {
+                    _lastBlockedApp.value = restriction.restrictedAppName
+                    withContext(Dispatchers.Main) {
+                        launchBlockScreen(
+                            packageName = pkgName,
+                            appName = appLabel,
+                            ruleName = restriction.ruleName,
+                            category = restriction.category,
+                            endTime = restriction.endTime
+                        )
+                    }
                 }
             }
         }

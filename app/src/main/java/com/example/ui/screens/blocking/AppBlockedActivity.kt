@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sms
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -65,8 +66,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.FocusSenseApplication
+import com.example.MainActivity
 import com.example.ui.theme.CoralDanger
 import com.example.ui.theme.CoralDangerBg
+import com.example.ui.theme.EmeraldSafe
 import com.example.ui.theme.IndigoPrimary
 import com.example.ui.theme.MyApplicationTheme
 
@@ -78,6 +81,7 @@ class AppBlockedActivity : ComponentActivity() {
         const val EXTRA_RULE_NAME = "extra_rule_name"
         const val EXTRA_CATEGORY = "extra_category"
         const val EXTRA_END_TIME = "extra_end_time"
+        const val EXTRA_OPEN_ALLOWED_CHANNELS = "extra_open_allowed_channels"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +103,7 @@ class AppBlockedActivity : ComponentActivity() {
                     category = category,
                     endTime = endTime,
                     onGoHome = { navigateHome() },
+                    onSeeAllowedChannels = { openAllowedChannels() },
                     onCallHelpline = { callCrisisHelpline() },
                     onSmsHelpline = { smsCrisisHelpline() },
                     onParentUnlock = { pin ->
@@ -107,6 +112,15 @@ class AppBlockedActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun openAllowedChannels() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OPEN_ALLOWED_CHANNELS, true)
+        }
+        startActivity(intent)
+        finish()
     }
 
     private fun navigateHome() {
@@ -156,6 +170,7 @@ fun AppBlockedScreen(
     category: String,
     endTime: String,
     onGoHome: () -> Unit,
+    onSeeAllowedChannels: () -> Unit = {},
     onCallHelpline: () -> Unit = {},
     onSmsHelpline: () -> Unit = {},
     onParentUnlock: (String) -> Boolean
@@ -588,6 +603,31 @@ fun AppBlockedScreen(
             }
 
             Spacer(modifier = Modifier.height(28.dp))
+
+            // Study Whitelist: See Your Allowed Channels Button
+            Button(
+                onClick = onSeeAllowedChannels,
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldSafe),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("app_blocked_see_allowed_channels_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VideoLibrary,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "See Your Allowed Channels",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Primary Return Home Button
             Button(

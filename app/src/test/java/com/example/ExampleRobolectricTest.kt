@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [36])
 class ExampleRobolectricTest {
 
   @Test
@@ -87,5 +87,28 @@ class ExampleRobolectricTest {
 
     repository.toggleAppBlock("child-default", "com.google.android.youtube", false)
     assertFalse("Should be unblocked after toggle off", repository.isPackageBlockedSync("com.google.android.youtube"))
+  }
+
+  @Test
+  fun `channel can be searched allowed and whitelisted for focus study`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.FocusSenseRepository(context)
+
+    val channel = com.example.data.model.AllowedYouTubeChannelEntity(
+      channelId = "test-striver-channel",
+      childId = "child-default",
+      channelName = "Striver",
+      handle = "@takeUforward",
+      description = "DSA and computer science tutorials",
+      category = "Computer Science",
+      channelUrl = "https://m.youtube.com/@takeUforward",
+      isAllowed = true
+    )
+    repository.addYouTubeChannel(channel)
+
+    repository.toggleYouTubeChannelAllowed("test-striver-channel", true)
+    assertTrue("Channel should be allowed", channel.isAllowed)
+    assertEquals("Striver", channel.channelName)
+    assertEquals("@takeUforward", channel.handle)
   }
 }

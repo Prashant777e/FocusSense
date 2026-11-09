@@ -207,3 +207,27 @@ interface LocationDao {
     @Query("SELECT * FROM location_history ORDER BY recordedAt DESC LIMIT 50")
     suspend fun getAllLocationsSync(): List<LocationPointEntity>
 }
+
+@Dao
+interface YouTubeDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(channel: com.example.data.model.AllowedYouTubeChannelEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(channels: List<com.example.data.model.AllowedYouTubeChannelEntity>)
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId ORDER BY allowedAt DESC")
+    fun getAllChannelsForChild(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND isAllowed = 1 ORDER BY allowedAt DESC")
+    fun getWhitelistedChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND channelName = :name LIMIT 1")
+    suspend fun findChannelByName(childId: String, name: String): com.example.data.model.AllowedYouTubeChannelEntity?
+
+    @Query("UPDATE allowed_youtube_channels SET isAllowed = :isAllowed WHERE channelId = :channelId")
+    suspend fun updateAllowedStatus(channelId: String, isAllowed: Boolean)
+
+    @Query("DELETE FROM allowed_youtube_channels WHERE channelId = :channelId")
+    suspend fun removeChannel(channelId: String)
+}

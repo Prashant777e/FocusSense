@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -43,7 +44,10 @@ import androidx.compose.ui.unit.sp
 import com.example.data.repository.ActiveAppBlockInfo
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.CoralDanger
+import com.example.ui.theme.EmeraldDeep
 import com.example.ui.theme.EmeraldSafe
+import com.example.ui.theme.ForestCard
+import com.example.ui.theme.ForestDarkest
 import com.example.ui.theme.IndigoDark
 import com.example.ui.theme.IndigoPrimary
 import com.example.ui.theme.Navy900
@@ -53,7 +57,8 @@ import com.example.ui.theme.PurpleAccent
 fun AppRestrictionOverlay(
     blockInfo: ActiveAppBlockInfo,
     onDismiss: () -> Unit,
-    onParentOverrideRequested: () -> Unit
+    onParentOverrideRequested: () -> Unit,
+    onSeeAllowedChannels: () -> Unit = {}
 ) {
     val isBlocked = blockInfo.isBlocked
 
@@ -63,11 +68,11 @@ fun AppRestrictionOverlay(
             .background(
                 Brush.verticalGradient(
                     colors = if (isBlocked) listOf(
-                        Navy900.copy(alpha = 0.95f),
-                        IndigoDark.copy(alpha = 0.98f)
+                        ForestDarkest.copy(alpha = 0.96f),
+                        EmeraldDeep.copy(alpha = 0.98f)
                     ) else listOf(
-                        Color(0xFF064E3B).copy(alpha = 0.95f),
-                        Color(0xFF0F172A).copy(alpha = 0.98f)
+                        EmeraldDeep.copy(alpha = 0.95f),
+                        ForestDarkest.copy(alpha = 0.98f)
                     )
                 )
             )
@@ -77,7 +82,7 @@ fun AppRestrictionOverlay(
     ) {
         Card(
             shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            colors = CardDefaults.cardColors(containerColor = ForestCard),
             elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -172,19 +177,39 @@ fun AppRestrictionOverlay(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isBlocked) IndigoPrimary else EmeraldSafe),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("dismiss_restriction_button")
-                ) {
-                    Text(if (isBlocked) "Return to Study" else "OK, Got It", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
-
                 if (isBlocked) {
+                    // Feature requested: during the block, give option to "See Your Allowed Channels"
+                    Button(
+                        onClick = onSeeAllowedChannels,
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldSafe),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("see_allowed_channels_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VideoLibrary,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("See Your Allowed Channels", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("dismiss_restriction_button")
+                    ) {
+                        Text("Return to Focus Mode", fontSize = 14.sp)
+                    }
+
                     Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedButton(
@@ -202,6 +227,18 @@ fun AppRestrictionOverlay(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Parent Unlock (PIN)", fontSize = 13.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldSafe),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("dismiss_restriction_button")
+                    ) {
+                        Text("OK, Got It", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                 }
             }

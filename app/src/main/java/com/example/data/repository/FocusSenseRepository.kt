@@ -55,6 +55,7 @@ class FocusSenseRepository(context: Context) {
 
     // Current Session State
     private val prefs = context.getSharedPreferences("focussense_session_prefs", Context.MODE_PRIVATE)
+    private val securePrefs = com.example.data.local.SecurePreferences(context)
     private val _currentUser = MutableStateFlow<UserEntity?>(null)
     val currentUser: StateFlow<UserEntity?> = _currentUser.asStateFlow()
 
@@ -71,9 +72,10 @@ class FocusSenseRepository(context: Context) {
     private val _isSyncing = MutableStateFlow<Boolean>(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    // Central Server & Database URL (Render + Supabase PostgreSQL)
+    // Central Server & Database URL (Django + Supabase PostgreSQL)
+    private val defaultBackendUrl = "https://ais-dev-oopvudz6wyelc5jkmrnerc-562689220446.asia-east1.run.app"
     private val _serverUrl = MutableStateFlow<String>(
-        prefs.getString("server_api_url", "https://parental-controll.onrender.com") ?: "https://parental-controll.onrender.com"
+        prefs.getString("server_api_url", defaultBackendUrl) ?: defaultBackendUrl
     )
     val serverUrl: StateFlow<String> = _serverUrl.asStateFlow()
 
@@ -88,23 +90,8 @@ class FocusSenseRepository(context: Context) {
     }
 
     suspend fun testServerConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        try {
-            val service = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-            val response = service.healthCheck()
-            if (response.isSuccessful && response.body() != null) {
-                val body = response.body()!!
-                val dbStatus = body.database ?: "connected"
-                val counts = body.supabase_counts
-                val countsSummary = if (counts != null && counts.isNotEmpty()) {
-                    " (Users: ${counts["users"] ?: 0}, Logs: ${counts["activity_logs"] ?: 0}, Locations: ${counts["location_points"] ?: 0})"
-                } else ""
-                Pair(true, "Connected: ${body.service} • DB: $dbStatus$countsSummary")
-            } else {
-                Pair(false, "Server responded with HTTP ${response.code()}")
-            }
-        } catch (e: Exception) {
-            Pair(false, e.message ?: "Connection failed")
-        }
+        // Direct ping to Supabase REST API
+        com.example.data.remote.SupabaseClient.ping()
     }
 
     // In-Memory App Blocking Cache for 0ms Latency in AccessibilityService
@@ -213,122 +200,6 @@ class FocusSenseRepository(context: Context) {
                 val existingParents = db.userDao().getUsersByRoleSync("parent")
                 if (existingParents.isNotEmpty()) {
                     activeUser = existingParents.first()
-                } else {
-                    // Seed initial demo data for instant out-of-the-box exploration in Android Studio & Emulators
-                    val defaultGroup = FamilyGroupEntity(
-                        groupId = "group-demo-01",
-                        familyName = "FocusSense Family"
-                    )
-                    db.familyGroupDao().insert(defaultGroup)
-
-                    val defaultParent = UserEntity(
-                        userId = "parent-sarah-01",
-                        groupId = defaultGroup.groupId,
-                        email = "parent@demo.com",
-                        password = "demo",
-                        role = "parent",
-                        name = "Sarah Connor (Parent)",
-                        pin = "1234"
-                    )
-                    db.userDao().insert(defaultParent)
-
-                    val defaultChild = UserEntity(
-                        userId = "child-leo-01",
-                        groupId = defaultGroup.groupId,
-                        email = "leo@family.internal",
-                        password = "demo",
-                        role = "child",
-                        name = "Leo",
-                        pin = ""
-                    )
-                    db.userDao().insert(defaultChild)
-
-                    val defaultChildDevice = DeviceEntity(
-                        deviceId = "dev-child-01",
-                        userId = defaultChild.userId,
-                        deviceName = "Leo's Phone (Galaxy A54)",
-                        batteryPercent = 88,
-                        isOnline = true
-                    )
-                    db.deviceDao().insert(defaultChildDevice)
-
-                    val defaultRule1 = ScheduleRuleEntity(
-                        ruleId = "rule-school-hours",
-                        childId = defaultChild.userId,
-                        ruleName = "School Focus Hours",
-                        category = "Education",
-                        startTime = "08:30",
-                        endTime = "15:00",
-                        dayOfWeek = "Mon,Tue,Wed,Thu,Fri",
-                        restrictedPackages = "com.zhiliaoapp.musically,com.instagram.android,com.roblox.client",
-                        isActive = true
-                    )
-                    val defaultRule2 = ScheduleRuleEntity(
-                        ruleId = "rule-bedtime-curfew",
-                        childId = defaultChild.userId,
-                        ruleName = "Bedtime Curfew",
-                        category = "Bedtime",
-                        startTime = "21:30",
-                        endTime = "06:30",
-                        dayOfWeek = "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
-                        restrictedPackages = "com.google.android.youtube,com.zhiliaoapp.musically,com.instagram.android",
-                        isActive = true
-                    )
-                    db.scheduleRuleDao().insert(defaultRule1)
-                    db.scheduleRuleDao().insert(defaultRule2)
-
-                    val now = System.currentTimeMillis()
-                    db.activityLogDao().insert(
-                        ActivityLogEntity(
-                            logId = "log-seed-01",
-                            childId = defaultChild.userId,
-                            packageName = "com.google.android.youtube",
-                            appName = "YouTube",
-                            contentTitle = "Crash Course Biology: Cell Structures",
-                            extractedText = "Learning about mitochondria and cell biology structures for exam.",
-                            recordedAt = now - (15 * 60 * 1000L),
-                            isFlagged = false,
-                            threatCategory = "Safe"
-                        )
-                    )
-                    db.activityLogDao().insert(
-                        ActivityLogEntity(
-                            logId = "log-seed-02",
-                            childId = defaultChild.userId,
-                            packageName = "com.google.android.apps.messaging",
-                            appName = "Messages",
-                            contentTitle = "Family Group Chat",
-                            extractedText = "Dad: Remember to head home right after science club practice!",
-                            recordedAt = now - (45 * 60 * 1000L),
-                            isFlagged = false,
-                            threatCategory = "Safe"
-                        )
-                    )
-
-                    db.locationDao().insert(
-                        LocationPointEntity(
-                            locId = "loc-seed-01",
-                            childId = defaultChild.userId,
-                            latitude = 37.7749,
-                            longitude = -122.4194,
-                            accuracy = 4.5f,
-                            locationName = "Lincoln High School Campus",
-                            recordedAt = now - (10 * 60 * 1000L)
-                        )
-                    )
-
-                    val seedApps = listOf(
-                        InstalledAppEntity("app-1", defaultChild.userId, "com.google.android.youtube", "YouTube", "Streaming", isBlocked = false),
-                        InstalledAppEntity("app-2", defaultChild.userId, "com.zhiliaoapp.musically", "TikTok", "Social", isBlocked = true),
-                        InstalledAppEntity("app-3", defaultChild.userId, "com.roblox.client", "Roblox", "Gaming", isBlocked = false),
-                        InstalledAppEntity("app-4", defaultChild.userId, "com.instagram.android", "Instagram", "Social", isBlocked = true),
-                        InstalledAppEntity("app-5", defaultChild.userId, "com.android.chrome", "Chrome", "Browsers", isBlocked = false),
-                        InstalledAppEntity("app-6", defaultChild.userId, "com.whatsapp", "WhatsApp", "Social", isBlocked = false),
-                        InstalledAppEntity("app-7", defaultChild.userId, "com.google.android.apps.messaging", "Messages", "Social", isBlocked = false)
-                    )
-                    db.installedAppDao().insertAll(seedApps)
-
-                    activeUser = defaultParent
                 }
             }
 
@@ -387,48 +258,49 @@ class FocusSenseRepository(context: Context) {
         try {
             val normalizedEmail = email.trim().lowercase()
 
-            // 1. Attempt to register on Central Server (Render / Supabase)
-            var serverParentUser: UserEntity? = null
-            try {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                val response = api.registerParent(
-                    com.example.data.remote.RegisterParentDto(
-                        name = name.trim(),
-                        family_name = familyName.trim(),
-                        email = normalizedEmail,
-                        password = password,
-                        pin = if (pin.isNotBlank()) pin.trim() else "1234"
-                    )
+            // 1. Direct register to Supabase PostgreSQL (mukkrkppvfxnbbxozvwj)
+            val supabaseResult = com.example.data.remote.SupabaseClient.registerParent(
+                name = name,
+                familyName = familyName,
+                email = normalizedEmail,
+                passwordHash = password
+            )
+
+            if (supabaseResult.isSuccess) {
+                val record = supabaseResult.getOrThrow()
+                val group = FamilyGroupEntity(
+                    groupId = record.familyId ?: UUID.randomUUID().toString(),
+                    familyName = if (familyName.isNotBlank()) familyName.trim() else "${name.trim()}'s Family"
                 )
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val group = FamilyGroupEntity(
-                        groupId = body.user.group_id,
-                        familyName = body.family_name.ifBlank { "${name.trim()}'s Family" }
-                    )
-                    db.familyGroupDao().insert(group)
+                db.familyGroupDao().insert(group)
 
-                    val parent = UserEntity(
-                        userId = body.user.user_id,
-                        groupId = body.user.group_id,
-                        email = body.user.email,
-                        password = password,
-                        role = body.user.role,
-                        name = body.user.name,
-                        pin = body.user.pin,
-                        avatar = body.user.avatar
-                    )
-                    db.userDao().insert(parent)
-                    serverParentUser = parent
-                }
-            } catch (e: Exception) {
-                // Server unavailable or offline -> fallback to local creation below
-            }
+                val parent = UserEntity(
+                    userId = record.id,
+                    groupId = group.groupId,
+                    email = record.email,
+                    password = password,
+                    role = "parent",
+                    name = record.displayName,
+                    pin = pin
+                )
+                db.userDao().insert(parent)
 
-            if (serverParentUser != null) {
-                prefs.edit().putString("saved_user_id", serverParentUser.userId).apply()
-                _currentUser.value = serverParentUser
-                return@withContext Result.success(serverParentUser)
+                val parentDevice = DeviceEntity(
+                    deviceId = "dev-${UUID.randomUUID().toString().take(8)}",
+                    userId = parent.userId,
+                    deviceName = "${name.trim()}'s Parent Phone",
+                    batteryPercent = 100,
+                    isOnline = true
+                )
+                db.deviceDao().insert(parentDevice)
+
+                prefs.edit().putString("saved_user_id", parent.userId).apply()
+                _currentUser.value = parent
+                return@withContext Result.success(parent)
+            } else {
+                val err = supabaseResult.exceptionOrNull()
+                Log.e("FocusSenseRepo", "Supabase register failed: ${err?.message}", err)
+                return@withContext Result.failure(err ?: Exception("Registration failed on Supabase."))
             }
 
             // 2. Offline / Local Fallback
@@ -476,65 +348,59 @@ class FocusSenseRepository(context: Context) {
         try {
             val normalizedEmail = email.trim().lowercase()
 
-            // 1. Attempt Server Login (Render / Supabase)
-            try {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                val response = api.loginParent(
-                    com.example.data.remote.LoginParentDto(
-                        email = normalizedEmail,
-                        password = password
-                    )
+            // 1. Attempt login with Supabase
+            val supabaseResult = com.example.data.remote.SupabaseClient.loginParent(
+                email = normalizedEmail,
+                passwordExpected = password
+            )
+            if (supabaseResult.isSuccess) {
+                val record = supabaseResult.getOrThrow()
+                val familyId = record.familyId ?: UUID.randomUUID().toString()
+                val group = FamilyGroupEntity(
+                    groupId = familyId,
+                    familyName = "My Family"
                 )
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val group = FamilyGroupEntity(
-                        groupId = body.user.group_id,
-                        familyName = body.family_name.ifBlank { "My Family" }
-                    )
-                    db.familyGroupDao().insert(group)
+                db.familyGroupDao().insert(group)
 
-                    val parent = UserEntity(
-                        userId = body.user.user_id,
-                        groupId = body.user.group_id,
-                        email = body.user.email,
+                val parent = UserEntity(
+                    userId = record.id,
+                    groupId = familyId,
+                    email = record.email,
+                    password = password,
+                    role = "parent",
+                    name = record.displayName,
+                    pin = "1234"
+                )
+                db.userDao().insert(parent)
+
+                // Sync all children of this family from Supabase
+                val children = com.example.data.remote.SupabaseClient.fetchFamilyChildren(familyId)
+                for (c in children) {
+                    val childEntity = UserEntity(
+                        userId = c.id,
+                        groupId = familyId,
+                        email = c.email,
                         password = password,
-                        role = body.user.role,
-                        name = body.user.name,
-                        pin = body.user.pin,
-                        avatar = body.user.avatar
+                        role = "child",
+                        name = c.displayName,
+                        pin = ""
                     )
-                    db.userDao().insert(parent)
-
-                    // Insert synced children
-                    val children = body.children.map { c ->
-                        UserEntity(
-                            userId = c.user_id,
-                            groupId = c.group_id,
-                            email = c.email,
-                            password = password,
-                            role = c.role,
-                            name = c.name,
-                            pin = c.pin,
-                            avatar = c.avatar
-                        )
-                    }
-                    if (children.isNotEmpty()) {
-                        db.userDao().insertAll(children)
-                        _selectedChildId.value = children.first().userId
-                    }
-
-                    prefs.edit().putString("saved_user_id", parent.userId).apply()
-                    _currentUser.value = parent
-                    return@withContext Result.success(parent)
+                    db.userDao().insert(childEntity)
                 }
-            } catch (e: Exception) {
-                // Server unavailable or offline -> fallback to local check
+                if (children.isNotEmpty()) {
+                    _selectedChildId.value = children.first().id
+                }
+
+                prefs.edit().putString("saved_user_id", parent.userId).apply()
+                _currentUser.value = parent
+                return@withContext Result.success(parent)
             }
 
             // 2. Offline / Local fallback check
             val user = db.userDao().getUserByEmail(normalizedEmail)
             if (user == null) {
-                return@withContext Result.failure(Exception("No account found for '$normalizedEmail'. Please verify credentials or create an account."))
+                val err = supabaseResult.exceptionOrNull()
+                return@withContext Result.failure(err ?: Exception("No account found for '$normalizedEmail'. Please verify credentials or create an account."))
             }
             if (user.password != password) {
                 return@withContext Result.failure(Exception("Incorrect password. Please verify and try again."))
@@ -551,6 +417,50 @@ class FocusSenseRepository(context: Context) {
         }
     }
 
+    suspend fun createChildAccount(
+        username: String,
+        password: String,
+        displayName: String
+    ): Result<UserEntity> = withContext(Dispatchers.IO) {
+        try {
+            val parent = _currentUser.value ?: return@withContext Result.failure(Exception("Not logged in as parent."))
+            val cleanUsername = username.trim().lowercase()
+
+            // 1. Direct creation in Supabase fs_users
+            val supabaseResult = com.example.data.remote.SupabaseClient.createChildAccount(
+                username = cleanUsername,
+                displayName = displayName,
+                familyId = parent.groupId,
+                parentId = parent.userId,
+                passwordHash = password
+            )
+
+            val childId = if (supabaseResult.isSuccess) {
+                supabaseResult.getOrThrow().id
+            } else {
+                Log.w("FocusSenseRepo", "Supabase child creation failed: ${supabaseResult.exceptionOrNull()?.message}")
+                UUID.randomUUID().toString()
+            }
+
+            val newChild = UserEntity(
+                userId = childId,
+                groupId = parent.groupId,
+                email = "$cleanUsername@focussense.local",
+                password = password,
+                role = "child",
+                name = displayName.trim(),
+                pin = ""
+            )
+            db.userDao().insert(newChild)
+            if (_selectedChildId.value.isBlank()) {
+                _selectedChildId.value = childId
+            }
+            Result.success(newChild)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun pairChildDevice(
         parentEmail: String,
         parentPassword: String,
@@ -560,46 +470,50 @@ class FocusSenseRepository(context: Context) {
         try {
             val normalizedParentEmail = parentEmail.trim().lowercase()
 
-            // 1. Attempt Server Device Pairing (Render / Supabase)
-            try {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                val response = api.pairChildDevice(
-                    com.example.data.remote.PairChildDto(
-                        parent_email = normalizedParentEmail,
-                        parent_password = parentPassword,
-                        child_name = childName.trim(),
-                        device_name = if (deviceName.isNotBlank()) deviceName.trim() else "${childName.trim()}'s Phone"
-                    )
+            // 1. Direct Supabase Device Pairing
+            val supabasePairResult = com.example.data.remote.SupabaseClient.pairChildDevice(
+                parentEmail = normalizedParentEmail,
+                parentPasswordExpected = parentPassword,
+                childName = childName,
+                deviceName = deviceName
+            )
+
+            if (supabasePairResult.isSuccess) {
+                val (childRecord, deviceId) = supabasePairResult.getOrThrow()
+                val familyId = childRecord.familyId ?: UUID.randomUUID().toString()
+
+                val group = FamilyGroupEntity(
+                    groupId = familyId,
+                    familyName = "${childName.trim()}'s Family"
                 )
-                if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val childUser = UserEntity(
-                        userId = body.child_user.user_id,
-                        groupId = body.group_id,
-                        email = body.child_user.email,
-                        password = parentPassword,
-                        role = "child",
-                        name = body.child_user.name,
-                        pin = ""
-                    )
-                    db.userDao().insert(childUser)
+                db.familyGroupDao().insert(group)
 
-                    val childDevice = DeviceEntity(
-                        deviceId = body.device_id,
-                        userId = childUser.userId,
-                        deviceName = if (deviceName.isNotBlank()) deviceName.trim() else "${childName.trim()}'s Phone",
-                        batteryPercent = 95,
-                        isOnline = true
-                    )
-                    db.deviceDao().insert(childDevice)
+                val childUser = UserEntity(
+                    userId = childRecord.id,
+                    groupId = familyId,
+                    email = childRecord.email,
+                    password = parentPassword,
+                    role = "child",
+                    name = childRecord.displayName,
+                    pin = ""
+                )
+                db.userDao().insert(childUser)
 
-                    prefs.edit().putString("saved_user_id", childUser.userId).apply()
-                    _currentUser.value = childUser
-                    _selectedChildId.value = childUser.userId
-                    return@withContext Result.success(childUser)
-                }
-            } catch (e: Exception) {
-                // Server unavailable or offline -> fallback to local creation
+                val childDevice = DeviceEntity(
+                    deviceId = deviceId,
+                    userId = childUser.userId,
+                    deviceName = if (deviceName.isNotBlank()) deviceName.trim() else "${childName.trim()}'s Phone",
+                    batteryPercent = 95,
+                    isOnline = true
+                )
+                db.deviceDao().insert(childDevice)
+
+                prefs.edit().putString("saved_user_id", childUser.userId).apply()
+                _currentUser.value = childUser
+                _selectedChildId.value = childUser.userId
+                return@withContext Result.success(childUser)
+            } else {
+                Log.w("FocusSenseRepo", "Supabase pair failed: ${supabasePairResult.exceptionOrNull()?.message}")
             }
 
             // 2. Offline Local Creation Fallback
@@ -759,18 +673,7 @@ class FocusSenseRepository(context: Context) {
 
         // Live Real-Time Server Sync: push directly to Supabase if connected
         if (_isNetworkConnected.value) {
-            try {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                api.syncData(
-                    com.example.data.remote.SyncRequest(
-                        child_id = childId.ifBlank { "child-default" },
-                        logs = listOf(log),
-                        locations = emptyList()
-                    )
-                )
-            } catch (e: Exception) {
-                // Stored locally in SQLite, will sync on next cycle
-            }
+            com.example.data.remote.SupabaseClient.pushActivityLog(log, childId.ifBlank { "child-default" })
         }
 
         log
@@ -914,10 +817,7 @@ class FocusSenseRepository(context: Context) {
         _eventStream.tryEmit(SentinelEvent.LocationUpdated(locationName, lat, lng))
 
         if (_isNetworkConnected.value) {
-            try {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                api.reportLocation(point)
-            } catch (_: Exception) {}
+            com.example.data.remote.SupabaseClient.pushLocation(point, childId.ifBlank { "child-default" })
         }
     }
 
@@ -1130,5 +1030,25 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun updateParentPin(userId: String, newPin: String) = withContext(Dispatchers.IO) {
         db.userDao().updatePin(userId, newPin)
+    }
+
+    fun getAllowedYouTubeChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>> {
+        return db.youtubeDao().getAllChannelsForChild(childId)
+    }
+
+    fun getWhitelistedYouTubeChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>> {
+        return db.youtubeDao().getWhitelistedChannels(childId)
+    }
+
+    suspend fun toggleYouTubeChannelAllowed(channelId: String, isAllowed: Boolean) = withContext(Dispatchers.IO) {
+        db.youtubeDao().updateAllowedStatus(channelId, isAllowed)
+    }
+
+    suspend fun addYouTubeChannel(channel: com.example.data.model.AllowedYouTubeChannelEntity) = withContext(Dispatchers.IO) {
+        db.youtubeDao().insert(channel)
+    }
+
+    suspend fun removeYouTubeChannel(channelId: String) = withContext(Dispatchers.IO) {
+        db.youtubeDao().removeChannel(channelId)
     }
 }

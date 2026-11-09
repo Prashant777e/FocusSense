@@ -126,7 +126,7 @@ fun ParentPinDialog(
                 )
 
                 Text(
-                    text = "Enter Parent 4-digit PIN to exit child mode or access parental controls (Default: 1234)",
+                    text = "Enter Parent 4-digit PIN to exit child mode or access parental controls.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 8.dp)
@@ -137,12 +137,12 @@ fun ParentPinDialog(
                 OutlinedTextField(
                     value = enteredPin,
                     onValueChange = {
-                        if (it.length <= 4) {
+                        if (it.length <= 6) {
                             enteredPin = it
                             hasError = false
                         }
                     },
-                    label = { Text("4-digit PIN") },
+                    label = { Text("Parent PIN") },
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     singleLine = true,
@@ -154,7 +154,7 @@ fun ParentPinDialog(
 
                 if (hasError) {
                     Text(
-                        text = "Incorrect PIN. Default is 1234.",
+                        text = "Incorrect Security PIN. Please enter your parent security PIN.",
                         color = CoralDanger,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(top = 4.dp)
@@ -176,7 +176,7 @@ fun ParentPinDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            if (enteredPin == expectedPin || enteredPin == "1234") {
+                            if (enteredPin == expectedPin) {
                                 onPinVerified()
                             } else {
                                 hasError = true
@@ -773,3 +773,104 @@ fun LogDetailDialog(
         }
     }
 }
+
+@Composable
+fun CreateChildAccountDialog(
+    onDismiss: () -> Unit,
+    onCreateChild: (username: String, password: String, displayName: String) -> Unit,
+    isLoading: Boolean = false,
+    errorMessage: String? = null
+) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Create Child Account",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Assign a username and password for your child to log in on their phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it },
+                    label = { Text("Child Display Name (e.g. Alex)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("child_display_name_input")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it.lowercase().trim() },
+                    label = { Text("Username / Handle (e.g. alex_c)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("child_username_input")
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("child_password_input")
+                )
+
+                if (!errorMessage.isNull_or_blank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = errorMessage ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (username.isNotBlank() && password.isNotBlank() && displayName.isNotBlank()) {
+                        onCreateChild(username, password, displayName)
+                    }
+                },
+                enabled = !isLoading && username.isNotBlank() && password.isNotBlank() && displayName.isNotBlank(),
+                modifier = Modifier.testTag("submit_create_child_button")
+            ) {
+                Text(if (isLoading) "Creating..." else "Create Account")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("cancel_create_child_button")
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+private fun String?.isNull_or_blank(): Boolean = this == null || this.isBlank()
+

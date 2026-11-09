@@ -84,8 +84,8 @@ class LocationTrackingService : Service() {
         val app = application as? FocusSenseApplication
 
         if (hasFine) {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 30000L)
-                .setMinUpdateIntervalMillis(15000L)
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 300000L)
+                .setMinUpdateIntervalMillis(300000L)
                 .build()
 
             locationCallback = object : LocationCallback() {
@@ -109,7 +109,7 @@ class LocationTrackingService : Service() {
                 mainLooper
             )
         } else {
-            // Emulate periodic safe waypoint updates if physical hardware location is not granted
+            // Emulate periodic safe waypoint updates every 5 minutes if physical hardware location is not granted
             startSimulationWaypointLoop(childId)
         }
     }
@@ -136,7 +136,7 @@ class LocationTrackingService : Service() {
                     locationName = pt.third
                 )
                 index++
-                delay(45000L)
+                delay(300000L)
             }
         }
     }

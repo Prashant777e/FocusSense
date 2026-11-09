@@ -15,14 +15,19 @@ private val DarkColorScheme = darkColorScheme(
     primary = IndigoPrimary,
     onPrimary = Color.White,
     primaryContainer = IndigoDark,
-    onPrimaryContainer = Color.White,
+    onPrimaryContainer = Color(0xFFE0E7FF),
     secondary = PurpleAccent,
     onSecondary = Color.White,
     secondaryContainer = Navy700,
-    onSecondaryContainer = Color.White,
-    tertiary = AmberWarning,
+    onSecondaryContainer = PurpleAccentBg,
+    tertiary = EmeraldSafe,
+    onTertiary = Color.White,
     background = SurfaceDark,
     surface = CardDark,
+    surfaceVariant = Navy700,
+    onSurfaceVariant = TextSecondaryDark,
+    outline = Navy700,
+    outlineVariant = Color(0xFF475569),
     onBackground = TextPrimaryDark,
     onSurface = TextPrimaryDark,
     error = CoralDanger,
@@ -30,17 +35,22 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = IndigoDark,
+    primary = IndigoPrimary,
     onPrimary = Color.White,
-    primaryContainer = IndigoLight,
-    onPrimaryContainer = Navy900,
+    primaryContainer = Color(0xFFEEF2FF),
+    onPrimaryContainer = IndigoDark,
     secondary = PurpleAccent,
     onSecondary = Color.White,
     secondaryContainer = PurpleAccentBg,
-    onSecondaryContainer = Navy900,
-    tertiary = AmberWarning,
+    onSecondaryContainer = Color(0xFF581C87),
+    tertiary = EmeraldSafe,
+    onTertiary = Color.White,
     background = SurfaceLight,
     surface = CardLight,
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = TextSecondaryLight,
+    outline = Color(0xFFCBD5E1),
+    outlineVariant = Color(0xFFE2E8F0),
     onBackground = TextPrimaryLight,
     onSurface = TextPrimaryLight,
     error = CoralDanger,
@@ -50,7 +60,8 @@ private val LightColorScheme = lightColorScheme(
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false, // Set false for consistent branded colors
+    // Dynamic color is available on Android 12+
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -58,6 +69,7 @@ fun MyApplicationTheme(
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
+
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
     }

@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -91,16 +92,29 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val openAllowedChannels = intent?.getBooleanExtra("extra_open_allowed_channels", false) == true
+
         setContent {
             MyApplicationTheme {
-                FocusSenseApp(viewModel = viewModel)
+                FocusSenseApp(
+                    viewModel = viewModel,
+                    initialOpenAllowedChannels = openAllowedChannels
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 }
 
 @Composable
-fun FocusSenseApp(viewModel: FocusSenseViewModel) {
+fun FocusSenseApp(
+    viewModel: FocusSenseViewModel,
+    initialOpenAllowedChannels: Boolean = false
+) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val isSessionReady by viewModel.isSessionReady.collectAsStateWithLifecycle()
 
@@ -168,9 +182,20 @@ fun FocusSenseApp(viewModel: FocusSenseViewModel) {
     val lastSimulatedLog by viewModel.lastSimulatedLog.collectAsStateWithLifecycle()
     val activeRestrictionOverlay by viewModel.activeRestrictionOverlay.collectAsStateWithLifecycle()
     val pomodoroState by viewModel.pomodoroState.collectAsStateWithLifecycle()
+    val allowedYouTubeChannels by viewModel.allowedYouTubeChannels.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val isSearchingChannels by viewModel.isSearchingChannels.collectAsStateWithLifecycle()
+
+    var childInitialTab by remember { mutableIntStateOf(0) }
+    LaunchedEffect(initialOpenAllowedChannels) {
+        if (initialOpenAllowedChannels) {
+            childInitialTab = 0
+        }
+    }
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showProfileSwitchDialog by remember { mutableStateOf(false) }
+    var showCreateChildDialog by remember { mutableStateOf(false) }
     var pendingSwitchUser by remember { mutableStateOf<UserEntity?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -236,7 +261,8 @@ fun FocusSenseApp(viewModel: FocusSenseViewModel) {
                     } else {
                         showProfileSwitchDialog = true
                     }
-                }
+                },
+                onCreateChildRequested = { showCreateChildDialog = true }
             )
         }
     ) { innerPadding ->
@@ -272,7 +298,8 @@ fun FocusSenseApp(viewModel: FocusSenseViewModel) {
                     installedApps = installedApps,
                     onToggleAppBlock = { pkg, isBlocked -> viewModel.toggleAppBlock(pkg, isBlocked) },
                     onRefreshInstalledApps = { viewModel.refreshInstalledApps(context) },
-                    onSwitchAccountRequested = { showProfileSwitchDialog = true }
+                    onSwitchAccountRequested = { showProfileSwitchDialog = true },
+                    onCreateChildAccountRequested = { showCreateChildDialog = true }
                 )
             } else {
                 ChildDashboardScreen(
@@ -282,6 +309,22 @@ fun FocusSenseApp(viewModel: FocusSenseViewModel) {
                     isAnalyzing = isAnalyzing,
                     lastSimulatedLog = lastSimulatedLog,
                     pomodoroState = pomodoroState,
+                    allowedYouTubeChannels = allowedYouTubeChannels,
+                    searchResults = searchResults,
+                    isSearchingChannels = isSearchingChannels,
+                    onSearchChannels = { query -> viewModel.searchChannels(query) },
+                    onClearSearch = { viewModel.clearSearchResults() },
+                    onAddChannelFromSearch = { result -> viewModel.addAllowedChannel(result) },
+                    initialTab = childInitialTab,
+                    onToggleYouTubeChannelAllowed = { channelId, isAllowed ->
+                        viewModel.toggleYouTubeChannelAllowed(channelId, isAllowed)
+                    },
+                    onAddCustomYouTubeChannel = { name, cat, url ->
+                        viewModel.addCustomYouTubeChannel(name, cat, url)
+                    },
+                    onRemoveYouTubeChannel = { channelId ->
+                        viewModel.removeYouTubeChannel(channelId)
+                    },
                     onStartPomodoro = { pkg, name, mins ->
                         viewModel.startPomodoroFocus(pkg, name, mins)
                     },
@@ -307,10 +350,33 @@ fun FocusSenseApp(viewModel: FocusSenseViewModel) {
                     onParentOverrideRequested = {
                         viewModel.dismissRestrictionOverlay()
                         showPinDialog = true
+                    },
+                    onSeeAllowedChannels = {
+                        viewModel.dismissRestrictionOverlay()
+                        childInitialTab = 0
                     }
                 )
             }
         }
+    }
+
+    // Create Child Account Dialog
+    if (showCreateChildDialog) {
+        val authError by viewModel.authError.collectAsStateWithLifecycle()
+        val isAuthLoading by viewModel.isAuthLoading.collectAsStateWithLifecycle()
+        com.example.ui.dialogs.CreateChildAccountDialog(
+            onDismiss = {
+                viewModel.clearAuthError()
+                showCreateChildDialog = false
+            },
+            onCreateChild = { username, password, displayName ->
+                viewModel.createChildAccount(username, password, displayName) {
+                    showCreateChildDialog = false
+                }
+            },
+            isLoading = isAuthLoading,
+            errorMessage = authError
+        )
     }
 
     // Parent PIN Verification Dialog

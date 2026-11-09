@@ -31,23 +31,37 @@ data class UserDto(
 )
 
 data class RegisterParentDto(
-    val name: String,
-    val family_name: String = "",
     val email: String,
     val password: String,
-    val pin: String = "1234"
+    val display_name: String,
+    val family_name: String = ""
 )
 
 data class LoginParentDto(
-    val email: String,
+    val identifier: String,
     val password: String
 )
 
+data class TokensDto(
+    val access: String = "",
+    val refresh: String = ""
+)
+
+data class DjangoUserDto(
+    val id: String,
+    val email: String,
+    val username: String = "",
+    val role: String = "PARENT",
+    val display_name: String = "",
+    val family_id: String? = null,
+    val family_name: String? = null
+)
+
 data class AuthResponseDto(
-    val status: String,
-    val user: UserDto,
-    val family_name: String = "",
-    val children: List<UserDto> = emptyList()
+    val status: String = "success",
+    val user: DjangoUserDto? = null,
+    val tokens: TokensDto? = null,
+    val errors: Map<String, Any>? = null
 )
 
 data class PairChildDto(
@@ -127,7 +141,7 @@ data class AppBlockToggleDto(
 
 interface FocusSenseApiService {
 
-    @GET("/api/health")
+    @GET("api/v1/health/")
     suspend fun healthCheck(): Response<HealthResponse>
 
     @GET("/api/ai/config")
@@ -136,10 +150,10 @@ interface FocusSenseApiService {
     @POST("/api/ai/config")
     suspend fun updateAIConfig(@Body payload: AIConfigUpdateRequest): Response<AIConfigResponse>
 
-    @POST("/api/auth/register")
+    @POST("api/v1/auth/parent/register/")
     suspend fun registerParent(@Body payload: RegisterParentDto): Response<AuthResponseDto>
 
-    @POST("/api/auth/login")
+    @POST("api/v1/auth/login/")
     suspend fun loginParent(@Body payload: LoginParentDto): Response<AuthResponseDto>
 
     @POST("/api/devices/pair")
@@ -197,7 +211,7 @@ interface FocusSenseApiService {
 }
 
 object ApiClient {
-    private var currentBaseUrl: String = "https://parental-controll.onrender.com"
+    private var currentBaseUrl: String = "https://ais-dev-oopvudz6wyelc5jkmrnerc-562689220446.asia-east1.run.app"
 
     private val logging = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

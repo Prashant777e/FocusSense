@@ -1,0 +1,5 @@
+[
+  "accounts/test_auth_flow.py::TestFocusSenseAuthenticationFlow::test_complete_parent_and_children_authentication_flow",
+  "accounts/tests.py::TestFocusSenseAuthenticationFlow::test_complete_parent_and_children_authentication_flow",
+  "policies/tests.py::TestPolicyAndTelemetryIntegration::test_device_enrollment_and_policy_workflow"
+]

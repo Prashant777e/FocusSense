@@ -78,6 +78,7 @@ fun FocusSenseTopBar(
     onToggleNetwork: (Boolean) -> Unit,
     onSyncNow: () -> Unit,
     onSwitchRoleRequested: () -> Unit,
+    onCreateChildRequested: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showChildDropdown by remember { mutableStateOf(false) }
@@ -272,6 +273,28 @@ fun FocusSenseTopBar(
                                     color = Color.White
                                 )
                             }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White.copy(alpha = 0.2f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { onCreateChildRequested() }
+                            .padding(start = 4.dp)
+                            .testTag("add_child_account_button")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "+ Add Child",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
                         }
                     }
                 }

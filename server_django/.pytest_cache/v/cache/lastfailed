@@ -1,0 +1,4 @@
+{
+  "policies/tests.py::TestPolicyAndTelemetryIntegration::test_device_enrollment_and_policy_workflow": true,
+  "accounts/tests.py::TestFocusSenseAuthenticationFlow::test_complete_parent_and_children_authentication_flow": true
+}

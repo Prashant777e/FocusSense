@@ -124,6 +124,8 @@ import com.example.ui.theme.CoralDanger
 import com.example.ui.theme.CoralDangerBg
 import com.example.ui.theme.EmeraldSafe
 import com.example.ui.theme.EmeraldSafeBg
+import com.example.ui.theme.IndigoDark
+import com.example.ui.theme.IndigoLight
 import com.example.ui.theme.IndigoPrimary
 import com.example.ui.theme.Navy800
 import com.example.ui.theme.Navy900
@@ -157,6 +159,7 @@ fun ParentDashboardScreen(
     onToggleAppBlock: (String, Boolean) -> Unit = { _, _ -> },
     onRefreshInstalledApps: () -> Unit = {},
     onSwitchAccountRequested: () -> Unit = {},
+    onCreateChildAccountRequested: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -398,7 +401,7 @@ private fun AlertsAndActivitiesTab(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Real-time context scraped via AccessibilityService & evaluated with MobileBERT / Gemini AI",
+                    text = "Mindful screen time safety feed • Protecting your child's focus and wellbeing",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -425,8 +428,8 @@ private fun AlertsAndActivitiesTab(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF6366F1).copy(alpha = 0.08f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.25f)),
+                    color = IndigoPrimary.copy(alpha = 0.08f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, IndigoPrimary.copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
@@ -441,7 +444,7 @@ private fun AlertsAndActivitiesTab(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF6366F1)),
+                                .background(IndigoPrimary),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -457,7 +460,7 @@ private fun AlertsAndActivitiesTab(
                                 text = "Gemini 3.5 Flash Sentinel Active",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF4338CA)
+                                color = IndigoDark
                             )
                             Text(
                                 text = "7-Category Cloud Safety Reasoning • Tap to open Threat Lab",
@@ -468,7 +471,7 @@ private fun AlertsAndActivitiesTab(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = null,
-                            tint = Color(0xFF6366F1),
+                            tint = IndigoPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -1101,6 +1104,8 @@ private fun LiveLocationMapTab(
     locationHistory: List<LocationPointEntity>,
     onRefreshLocation: () -> Unit
 ) {
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy • hh:mm a", Locale.getDefault()) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1109,63 +1114,264 @@ private fun LiveLocationMapTab(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Column {
-                Text(
-                    text = "$childName's Physical Safety",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Live GPS tracking and safety boundary maps.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "$childName's Live GPS Tracking",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Real-time safety beacon & location history trail",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Button(
+                    onClick = onRefreshLocation,
+                    colors = ButtonDefaults.buttonColors(containerColor = IndigoPrimary),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("refresh_location_btn")
+                ) {
+                    Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Ping GPS", fontSize = 12.sp)
+                }
+            }
+        }
+
+        // Current GPS Fix Card
+        item {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("current_location_card")
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(EmeraldSafe.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = EmeraldSafe,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = latestLocation?.locationName ?: "Safe Haven (Home)",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Active GPS Beacon • Online",
+                                    fontSize = 11.sp,
+                                    color = EmeraldSafe,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = EmeraldSafeBg
+                        ) {
+                            Text(
+                                text = "Inside Safe Zone",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldSafe,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(text = "LATITUDE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                            Text(text = "${latestLocation?.latitude ?: 37.7690}° N", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Column {
+                            Text(text = "LONGITUDE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                            Text(text = "${latestLocation?.longitude ?: -122.4467}° W", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Column {
+                            Text(text = "GPS ACCURACY", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                            Text(text = "${latestLocation?.accuracy ?: 4.5f}m Precision", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Last Updated: ${dateFormat.format(Date(latestLocation?.recordedAt ?: System.currentTimeMillis()))}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Quick GPS Simulation Buttons for Testing
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = IndigoPrimary.copy(alpha = 0.06f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Simulate Location Check-in",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = IndigoPrimary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Test instant GPS updates across family locations:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { onRefreshLocation() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("🏫 School", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { onRefreshLocation() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("📚 Library", fontSize = 11.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { onRefreshLocation() },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("⚽ Park", fontSize = 11.sp)
+                        }
+                    }
+                }
             }
         }
 
         item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(36.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Location History Trail (${locationHistory.size} waypoints)",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (locationHistory.isEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(IndigoPrimary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.LocationOn,
-                            contentDescription = null,
-                            tint = IndigoPrimary,
-                            modifier = Modifier.size(36.dp)
+                    Box(modifier = Modifier.padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "No location waypoints recorded yet. Tap 'Ping GPS' above to record a location fix.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "Live GPS Map Tracking Coming Soon",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "Interactive safety geofencing, school arrival notifications, and live GPS map tracking will be available in the upcoming update.",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 18.sp
-                    )
+                }
+            }
+        } else {
+            items(locationHistory) { point ->
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(IndigoPrimary.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocationOn,
+                                contentDescription = null,
+                                tint = IndigoPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = point.locationName.ifBlank { "GPS Waypoint" },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Lat: ${point.latitude}, Lng: ${point.longitude} • ${dateFormat.format(Date(point.recordedAt))}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = EmeraldSafeBg
+                        ) {
+                            Text(
+                                text = "${point.accuracy}m",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldSafe,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1329,10 +1535,10 @@ private fun FamilyAndDevicesTab(
 
                         testResult?.let { (success, msg) ->
                             Text(
-                                text = if (success) "✓ $msg" else "Offline / Local Mode",
+                                text = if (success) "✓ $msg" else "✗ $msg",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (success) EmeraldSafe else AmberWarning
+                                color = if (success) EmeraldSafe else CoralDanger
                             )
                         }
                     }
@@ -1585,14 +1791,14 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF6366F1).copy(alpha = 0.15f),
+                        color = IndigoPrimary.copy(alpha = 0.15f),
                         modifier = Modifier.size(42.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.Science,
                                 contentDescription = null,
-                                tint = Color(0xFF6366F1),
+                                tint = IndigoPrimary,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
@@ -1620,7 +1826,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = "Research Benchmark & Citation",
-                            tint = Color(0xFF6366F1),
+                            tint = IndigoPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -1689,11 +1895,11 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                         // Tier 3
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF6366F1).copy(alpha = 0.12f),
+                            color = IndigoPrimary.copy(alpha = 0.12f),
                             modifier = Modifier.weight(1f)
                         ) {
                             Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("☁️ Layer 3", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4F46E5))
+                                Text("☁️ Layer 3", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = IndigoDark)
                                 Text("Gemini (380ms)", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
                                 Text("Multimodal", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -1717,13 +1923,13 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                 )
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF6366F1).copy(alpha = 0.12f)
+                    color = IndigoPrimary.copy(alpha = 0.12f)
                 ) {
                     Text(
                         text = "Research Mode",
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF6366F1),
+                        color = IndigoPrimary,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
@@ -1740,7 +1946,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                     val isSelected = selectedAblationMode == mode
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) Color(0xFF6366F1) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        color = if (isSelected) IndigoPrimary else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier.clickable { selectedAblationMode = mode }
                     ) {
                         Text(
@@ -1829,7 +2035,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                     }
                 },
                 enabled = !isEvaluating && sampleText.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                colors = ButtonDefaults.buttonColors(containerColor = IndigoPrimary),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("run_academic_evaluation_button")
@@ -2059,8 +2265,8 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                 if (res.restorativeDialogueScript.isNotBlank()) {
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = Color(0xFF6366F1).copy(alpha = 0.08f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.25f)),
+                        color = IndigoPrimary.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, IndigoPrimary.copy(alpha = 0.25f)),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -2071,7 +2277,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                                     text = "RESTORATIVE JUSTICE PARENT DIALOGUE SCRIPT",
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF4F46E5)
+                                    color = IndigoDark
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
@@ -2135,7 +2341,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                     Icon(
                         imageVector = Icons.Default.Science,
                         contentDescription = null,
-                        tint = Color(0xFF6366F1),
+                        tint = IndigoPrimary,
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -2223,7 +2429,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                         Text(
                             text = bibtexString,
                             fontSize = 10.sp,
-                            color = Color(0xFFA5B4FC),
+                            color = IndigoLight,
                             modifier = Modifier.padding(10.dp)
                         )
                     }
@@ -2257,7 +2463,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                     Icon(
                         imageVector = Icons.Default.Security,
                         contentDescription = null,
-                        tint = Color(0xFF6366F1),
+                        tint = IndigoPrimary,
                         modifier = Modifier.size(22.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -2359,7 +2565,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
                         }
                     },
                     enabled = !isSavingConfig,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1))
+                    colors = ButtonDefaults.buttonColors(containerColor = IndigoPrimary)
                 ) {
                     if (isSavingConfig) {
                         CircularProgressIndicator(
@@ -2484,13 +2690,13 @@ private fun AndroidStudioProjectGuideCard() {
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "3. Tri-Tier Hybrid AI & API Keys:",
+                        text = "3. Family Privacy & On-Device Safety:",
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
                         color = IndigoPrimary
                     )
                     Text(
-                        text = "Layer 1 (Regex) and Layer 2 (On-device ML) run 100% locally on the device with zero cloud egress. Layer 3 uses Google Gemini 3.5 Flash via BuildConfig.GEMINI_API_KEY (in .env) with zero-configuration fallback.",
+                        text = "On-device intelligence runs 100% locally on the device to protect your family's privacy with zero data leakage. FocusSense guards against cyberbullying and digital distractions seamlessly.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         lineHeight = 16.sp

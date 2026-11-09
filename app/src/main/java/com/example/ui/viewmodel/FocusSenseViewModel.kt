@@ -111,6 +111,91 @@ class FocusSenseViewModel(
         .flatMapLatest { childId -> repository.getLocationHistoryForChild(childId) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Educational YouTube Channels Whitelist
+    val allowedYouTubeChannels: StateFlow<List<com.example.data.model.AllowedYouTubeChannelEntity>> = selectedChildId
+        .flatMapLatest { childId -> repository.getAllowedYouTubeChannels(childId.ifBlank { "child-default" }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val whitelistedYouTubeChannels: StateFlow<List<com.example.data.model.AllowedYouTubeChannelEntity>> = selectedChildId
+        .flatMapLatest { childId -> repository.getWhitelistedYouTubeChannels(childId.ifBlank { "child-default" }) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun toggleYouTubeChannelAllowed(channelId: String, isAllowed: Boolean) {
+        viewModelScope.launch {
+            repository.toggleYouTubeChannelAllowed(channelId, isAllowed)
+        }
+    }
+
+    fun removeYouTubeChannel(channelId: String) {
+        viewModelScope.launch {
+            repository.removeYouTubeChannel(channelId)
+        }
+    }
+
+    private val _searchResults = MutableStateFlow<List<com.example.data.remote.YouTubeChannelSearchResult>>(emptyList())
+    val searchResults: StateFlow<List<com.example.data.remote.YouTubeChannelSearchResult>> = _searchResults.asStateFlow()
+
+    private val _isSearchingChannels = MutableStateFlow(false)
+    val isSearchingChannels: StateFlow<Boolean> = _isSearchingChannels.asStateFlow()
+
+    fun searchChannels(query: String) {
+        viewModelScope.launch {
+            _isSearchingChannels.value = true
+            try {
+                val results = com.example.data.remote.YouTubeSearchService.searchChannels(query)
+                _searchResults.value = results
+            } finally {
+                _isSearchingChannels.value = false
+            }
+        }
+    }
+
+    fun clearSearchResults() {
+        _searchResults.value = emptyList()
+    }
+
+    fun addAllowedChannel(result: com.example.data.remote.YouTubeChannelSearchResult) {
+        viewModelScope.launch {
+            val childId = selectedChildId.value.ifBlank { "child-default" }
+            val newChannel = com.example.data.model.AllowedYouTubeChannelEntity(
+                channelId = result.channelId.ifBlank { java.util.UUID.randomUUID().toString() },
+                childId = childId,
+                channelName = result.title,
+                handle = result.handle,
+                description = result.description,
+                category = "Study & Focus",
+                subscriberCount = result.subscriberCount,
+                avatarUrl = result.avatarUrl,
+                channelUrl = result.channelUrl,
+                isAllowed = true
+            )
+            repository.addYouTubeChannel(newChannel)
+        }
+    }
+
+    fun addCustomYouTubeChannel(channelName: String, category: String = "Study & Focus", channelUrl: String = "") {
+        viewModelScope.launch {
+            val childId = selectedChildId.value.ifBlank { "child-default" }
+            val cleanName = channelName.trim()
+            val handleClean = cleanName.lowercase().replace(" ", "").replace("@", "")
+            val finalUrl = if (channelUrl.isNotBlank()) channelUrl else "https://m.youtube.com/@$handleClean"
+            val newChannel = com.example.data.model.AllowedYouTubeChannelEntity(
+                channelId = java.util.UUID.randomUUID().toString(),
+                childId = childId,
+                channelName = cleanName,
+                handle = "@$handleClean",
+                description = "Focus study channel",
+                category = category,
+                subscriberCount = "Allowed Channel",
+                videoCount = "Playlists & Videos",
+                avatarUrl = "",
+                channelUrl = finalUrl,
+                isAllowed = true
+            )
+            repository.addYouTubeChannel(newChannel)
+        }
+    }
+
     // Simulation feedback state
     private val _isAnalyzingContent = MutableStateFlow(false)
     val isAnalyzingContent: StateFlow<Boolean> = _isAnalyzingContent.asStateFlow()
@@ -175,6 +260,24 @@ class FocusSenseViewModel(
             result.fold(
                 onSuccess = { onSuccess() },
                 onFailure = { _authError.value = it.message ?: "Sign in failed. Please try again." }
+            )
+        }
+    }
+
+    fun createChildAccount(
+        username: String,
+        password: String,
+        displayName: String,
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isAuthLoading.value = true
+            _authError.value = null
+            val result = repository.createChildAccount(username, password, displayName)
+            _isAuthLoading.value = false
+            result.fold(
+                onSuccess = { onSuccess() },
+                onFailure = { _authError.value = it.message ?: "Failed to create child account." }
             )
         }
     }
