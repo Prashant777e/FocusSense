@@ -479,13 +479,25 @@ class FocusSenseViewModel(
 
     fun recordManualLocation(lat: Double, lng: Double, locationName: String) {
         viewModelScope.launch {
-            repository.recordLocation(
-                childId = selectedChildId.value,
-                lat = lat,
-                lng = lng,
-                accuracy = 4.0f,
-                locationName = locationName
-            )
+            val user = repository.currentUser.value
+            if (user?.role == "child") {
+                repository.recordLocation(
+                    childId = user.userId,
+                    lat = lat,
+                    lng = lng,
+                    accuracy = 4.0f,
+                    locationName = locationName
+                )
+            } else {
+                // Parent requests/refreshes latest child location from cloud
+                repository.refreshChildFromCloud(selectedChildId.value)
+            }
+        }
+    }
+
+    fun refreshChildTelemetry() {
+        viewModelScope.launch {
+            repository.refreshChildFromCloud(selectedChildId.value)
         }
     }
 }

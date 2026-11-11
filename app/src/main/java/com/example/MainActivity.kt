@@ -202,19 +202,34 @@ fun FocusSenseApp(
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    // Initial scan of installed apps and schedule sync on startup + background refresh loop
-    LaunchedEffect(Unit) {
-        while (true) {
+    // Lifecycle-aware periodic synchronization strictly gated by authenticated user role
+    LaunchedEffect(currentUser?.userId, currentUser?.role) {
+        val user = currentUser ?: return@LaunchedEffect
+        if (user.role == "child") {
+            // Child device: scan installed apps once on device and listen to schedule rules
             viewModel.refreshInstalledApps(context)
-            viewModel.syncSchedules()
-            delay(20000)
+            while (true) {
+                viewModel.syncSchedules()
+                delay(30000)
+            }
+        } else {
+            // Parent device: never collect local hardware apps or location; fetch remote child telemetry
+            while (true) {
+                if (selectedChildId.isNotBlank()) {
+                    viewModel.refreshInstalledApps(context)
+                    viewModel.syncSchedules()
+                    viewModel.refreshChildTelemetry()
+                }
+                delay(20000)
+            }
         }
     }
 
     LaunchedEffect(selectedChildId) {
-        if (selectedChildId.isNotBlank()) {
+        if (currentUser?.role == "parent" && selectedChildId.isNotBlank()) {
             viewModel.refreshInstalledApps(context)
             viewModel.syncSchedules()
+            viewModel.refreshChildTelemetry()
         }
     }
 

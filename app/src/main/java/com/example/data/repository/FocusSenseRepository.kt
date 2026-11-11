@@ -94,6 +94,14 @@ class FocusSenseRepository(context: Context) {
         com.example.data.remote.SupabaseClient.ping()
     }
 
+    fun getActiveDeviceId(): String {
+        val saved = prefs.getString("saved_device_id", null)
+        if (!saved.isNullOrBlank()) return saved
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("saved_device_id", newId).apply()
+        return newId
+    }
+
     // In-Memory App Blocking Cache for 0ms Latency in AccessibilityService
     private val _instantBlockedPackages = MutableStateFlow<Set<String>>(emptySet())
     val instantBlockedPackages: StateFlow<Set<String>> = _instantBlockedPackages.asStateFlow()
@@ -508,7 +516,10 @@ class FocusSenseRepository(context: Context) {
                 )
                 db.deviceDao().insert(childDevice)
 
-                prefs.edit().putString("saved_user_id", childUser.userId).apply()
+                prefs.edit()
+                    .putString("saved_user_id", childUser.userId)
+                    .putString("saved_device_id", deviceId)
+                    .apply()
                 _currentUser.value = childUser
                 _selectedChildId.value = childUser.userId
                 return@withContext Result.success(childUser)
@@ -673,7 +684,9 @@ class FocusSenseRepository(context: Context) {
 
         // Live Real-Time Server Sync: push directly to Supabase if connected
         if (_isNetworkConnected.value) {
-            com.example.data.remote.SupabaseClient.pushActivityLog(log, childId.ifBlank { "child-default" })
+            val devId = getActiveDeviceId()
+            val effectiveChildId = childId.ifBlank { _currentUser.value?.userId ?: "" }
+            com.example.data.remote.SupabaseClient.pushActivityLog(log, effectiveChildId, devId)
         }
 
         log
@@ -817,7 +830,9 @@ class FocusSenseRepository(context: Context) {
         _eventStream.tryEmit(SentinelEvent.LocationUpdated(locationName, lat, lng))
 
         if (_isNetworkConnected.value) {
-            com.example.data.remote.SupabaseClient.pushLocation(point, childId.ifBlank { "child-default" })
+            val devId = getActiveDeviceId()
+            val effectiveChildId = childId.ifBlank { _currentUser.value?.userId ?: "" }
+            com.example.data.remote.SupabaseClient.pushLocation(point, effectiveChildId, devId)
         }
     }
 
@@ -827,32 +842,50 @@ class FocusSenseRepository(context: Context) {
         var totalSynced = 0
         try {
             val childId = _selectedChildId.value.ifBlank {
-                _currentUser.value?.userId ?: "child-default"
+                _currentUser.value?.userId ?: ""
             }
+            val devId = getActiveDeviceId()
             val unsyncedLogs = db.activityLogDao().getUnsyncedLogs()
             val unsyncedLocations = db.locationDao().getUnsyncedLocations()
 
-            // If no pending unsynced records, sync recent logs and locations to guarantee Supabase has all data
+            // 1. Direct Supabase Cloud Sync
+            var supabaseLogsCount = 0
+            for (l in unsyncedLogs) {
+                val ok = com.example.data.remote.SupabaseClient.pushActivityLog(l, childId, devId)
+                if (ok) supabaseLogsCount++
+            }
+            var supabaseLocCount = 0
+            for (p in unsyncedLocations) {
+                val ok = com.example.data.remote.SupabaseClient.pushLocation(p, childId, devId)
+                if (ok) supabaseLocCount++
+            }
+            if (supabaseLogsCount > 0 || supabaseLocCount > 0) {
+                db.activityLogDao().markAllSynced()
+                db.locationDao().markAllSynced()
+                totalSynced = supabaseLogsCount + supabaseLocCount
+                Log.i("FocusSenseRepo", "Direct Supabase Sync uploaded $totalSynced records.")
+            }
+
+            // 2. Also try legacy ApiClient endpoint if configured
             val logsToSync = if (unsyncedLogs.isNotEmpty()) unsyncedLogs else db.activityLogDao().getAllLogsSync().take(30)
             val locationsToSync = if (unsyncedLocations.isNotEmpty()) unsyncedLocations else db.locationDao().getAllLocationsSync().take(30)
 
             if (logsToSync.isNotEmpty() || locationsToSync.isNotEmpty()) {
-                val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                val response = api.syncData(
-                    com.example.data.remote.SyncRequest(
-                        child_id = childId,
-                        logs = logsToSync,
-                        locations = locationsToSync
+                try {
+                    val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
+                    val response = api.syncData(
+                        com.example.data.remote.SyncRequest(
+                            child_id = childId.ifBlank { "child-default" },
+                            logs = logsToSync,
+                            locations = locationsToSync
+                        )
                     )
-                )
-                if (response.isSuccessful) {
-                    db.activityLogDao().markAllSynced()
-                    db.locationDao().markAllSynced()
-                    totalSynced = logsToSync.size + locationsToSync.size
-                    Log.i("FocusSenseRepo", "Successfully synced $totalSynced records to Supabase.")
-                } else {
-                    Log.e("FocusSenseRepo", "Server sync returned HTTP ${response.code()}")
-                }
+                    if (response.isSuccessful) {
+                        db.activityLogDao().markAllSynced()
+                        db.locationDao().markAllSynced()
+                        totalSynced = maxOf(totalSynced, logsToSync.size + locationsToSync.size)
+                    }
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             Log.e("FocusSenseRepo", "Sync to server failed: ${e.message}")
@@ -874,6 +907,8 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun addScheduleRule(rule: ScheduleRuleEntity) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().insert(rule)
+        val childId = rule.childId.ifBlank { _selectedChildId.value.ifBlank { _currentUser.value?.userId ?: "" } }
+        com.example.data.remote.SupabaseClient.pushScheduleRule(rule, childId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
             api.saveSchedule(rule)
@@ -882,6 +917,8 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun updateScheduleRule(rule: ScheduleRuleEntity) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().update(rule)
+        val childId = rule.childId.ifBlank { _selectedChildId.value.ifBlank { _currentUser.value?.userId ?: "" } }
+        com.example.data.remote.SupabaseClient.pushScheduleRule(rule, childId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
             api.saveSchedule(rule)
@@ -890,6 +927,7 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun deleteScheduleRule(ruleId: String) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().delete(ruleId)
+        com.example.data.remote.SupabaseClient.deleteScheduleRule(ruleId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
             api.deleteSchedule(ruleId)
@@ -898,6 +936,7 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun toggleRuleActive(ruleId: String, isActive: Boolean) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().toggleRuleActive(ruleId, isActive)
+        com.example.data.remote.SupabaseClient.toggleScheduleRule(ruleId, isActive)
         val rule = db.scheduleRuleDao().getAllActiveRulesSync().find { it.ruleId == ruleId }
         if (rule != null) {
             try {
@@ -908,14 +947,68 @@ class FocusSenseRepository(context: Context) {
     }
 
     suspend fun syncSchedulesWithServer(childId: String) = withContext(Dispatchers.IO) {
-        val effectiveChildId = childId.ifBlank { _selectedChildId.value.ifBlank { "child-default" } }
+        val effectiveChildId = childId.ifBlank { _selectedChildId.value.ifBlank { _currentUser.value?.userId ?: "" } }
+        if (effectiveChildId.isNotBlank()) {
+            val supabaseRules = com.example.data.remote.SupabaseClient.fetchScheduleRules(effectiveChildId)
+            if (supabaseRules.isNotEmpty()) {
+                db.scheduleRuleDao().insertAll(supabaseRules)
+            }
+        }
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-            val resp = api.getSchedules(effectiveChildId)
+            val resp = api.getSchedules(effectiveChildId.ifBlank { "child-default" })
             if (resp.isSuccessful && resp.body() != null) {
                 db.scheduleRuleDao().insertAll(resp.body()!!)
             }
         } catch (_: Exception) {}
+    }
+
+    suspend fun refreshChildFromCloud(childId: String) = withContext(Dispatchers.IO) {
+        val effectiveChildId = childId.ifBlank { _selectedChildId.value }
+        if (effectiveChildId.isBlank()) return@withContext
+
+        // 1. Fetch latest location from Supabase
+        val locObj = com.example.data.remote.SupabaseClient.fetchLatestLocation(effectiveChildId)
+        if (locObj != null) {
+            val point = LocationPointEntity(
+                locId = locObj.optString("id", UUID.randomUUID().toString()),
+                childId = effectiveChildId,
+                latitude = locObj.optDouble("latitude", 0.0),
+                longitude = locObj.optDouble("longitude", 0.0),
+                accuracy = locObj.optDouble("accuracy", 5.0).toFloat(),
+                locationName = "GPS Fix (${String.format("%.4f", locObj.optDouble("latitude", 0.0))}, ${String.format("%.4f", locObj.optDouble("longitude", 0.0))})",
+                recordedAt = System.currentTimeMillis(),
+                isSynced = true
+            )
+            db.locationDao().insert(point)
+        }
+
+        // 2. Fetch latest activity logs from Supabase
+        val logsArr = com.example.data.remote.SupabaseClient.fetchChildLogs(effectiveChildId)
+        for (obj in logsArr) {
+            val log = ActivityLogEntity(
+                logId = obj.optString("id", UUID.randomUUID().toString()),
+                childId = effectiveChildId,
+                packageName = obj.optString("package_name", ""),
+                appName = obj.optString("app_name", ""),
+                contentTitle = obj.optString("content_title", ""),
+                extractedText = "",
+                isFlagged = obj.optBoolean("is_flagged", false),
+                threatCategory = obj.optString("threat_category", "Safe"),
+                confidenceScore = obj.optDouble("confidence_score", 0.0).toFloat(),
+                aiAnalysisSummary = obj.optString("ai_analysis_summary", ""),
+                recordedAt = System.currentTimeMillis(),
+                isSynced = true,
+                isAcknowledged = false
+            )
+            db.activityLogDao().insert(log)
+        }
+
+        // 3. Fetch latest schedule rules from Supabase
+        val rules = com.example.data.remote.SupabaseClient.fetchScheduleRules(effectiveChildId)
+        if (rules.isNotEmpty()) {
+            db.scheduleRuleDao().insertAll(rules)
+        }
     }
 
     // Installed Applications & Instant App Locker
@@ -948,7 +1041,6 @@ class FocusSenseRepository(context: Context) {
             } catch (_: Exception) {}
         } else {
             // Parent Phone: Fetch the child's real installed apps from server
-            var remoteFound = false
             try {
                 val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
                 val remoteResp = api.getInstalledApps(effectiveChildId)
@@ -956,23 +1048,9 @@ class FocusSenseRepository(context: Context) {
                     db.installedAppDao().insertAll(remoteResp.body()!!)
                     val remoteBlocked = remoteResp.body()!!.filter { it.isBlocked }.map { it.packageName.lowercase() }.toSet()
                     _instantBlockedPackages.value = _instantBlockedPackages.value + remoteBlocked
-                    remoteFound = true
                 }
-            } catch (_: Exception) {}
-
-            // If running in single-device test mode or no server apps yet, scan device to provide real installed apps
-            if (!remoteFound) {
-                val localAppsCount = db.installedAppDao().getInstalledAppsSync(effectiveChildId).size
-                if (localAppsCount == 0) {
-                    val scannedApps = InstalledAppScanner.getInstalledLauncherApps(context, effectiveChildId)
-                    if (scannedApps.isNotEmpty()) {
-                        db.installedAppDao().insertAll(scannedApps)
-                        try {
-                            val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
-                            api.syncInstalledApps(effectiveChildId, scannedApps)
-                        } catch (_: Exception) {}
-                    }
-                }
+            } catch (_: Exception) {
+                Log.e("FocusSenseRepo", "Parent failed to fetch remote app inventory for $effectiveChildId")
             }
         }
     }

@@ -1,16 +1,16 @@
 package com.example.data.local
 
 import android.content.Context
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 class SecurePreferences(context: Context) {
 
-    private val masterKey = MasterKey.Builder(context)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-
     private val sharedPreferences = try {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
         EncryptedSharedPreferences.create(
             context,
             "focussense_secure_prefs",
@@ -20,6 +20,7 @@ class SecurePreferences(context: Context) {
         )
     } catch (e: Exception) {
         // Fallback for secure storage initialization failures in emulators/tests
+        Log.e("SecurePreferences", "Failed to initialize EncryptedSharedPreferences, falling back to standard prefs", e)
         context.getSharedPreferences("focussense_fallback_prefs", Context.MODE_PRIVATE)
     }
 

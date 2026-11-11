@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.FocusSenseApplication
@@ -40,6 +41,16 @@ class LocationTrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val app = application as? FocusSenseApplication
+        val currentUser = app?.repository?.currentUser?.value
+        
+        // Strictly gate location tracking for Child-only role
+        if (currentUser?.role != "child") {
+            Log.w("LocationTracking", "Unauthorized attempt to start tracking by non-child: ${currentUser?.role}")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val action = intent?.action
         if (action == ACTION_STOP) {
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -51,7 +62,7 @@ class LocationTrackingService : Service() {
         startForeground(NOTIFICATION_ID, buildForegroundNotification())
         _isTrackingActive.value = true
 
-        val childId = intent?.getStringExtra(EXTRA_CHILD_ID) ?: "child-leo"
+        val childId = intent?.getStringExtra(EXTRA_CHILD_ID) ?: currentUser.userId
         startLocationUpdates(childId)
 
         return START_STICKY
