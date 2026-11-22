@@ -114,6 +114,9 @@ interface ActivityLogDao {
     @Query("SELECT * FROM activity_logs WHERE isSynced = 0 ORDER BY recordedAt ASC")
     suspend fun getUnsyncedLogs(): List<ActivityLogEntity>
 
+    @Query("SELECT * FROM activity_logs WHERE logId = :logId LIMIT 1")
+    suspend fun getLogByIdSync(logId: String): ActivityLogEntity?
+
     @Query("SELECT * FROM activity_logs ORDER BY recordedAt DESC LIMIT 100")
     suspend fun getAllLogsSync(): List<ActivityLogEntity>
 }
@@ -230,6 +233,12 @@ interface YouTubeDao {
 
     @Query("SELECT * FROM allowed_youtube_channels WHERE isAllowed = 1 ORDER BY allowedAt DESC")
     suspend fun getAllWhitelistedChannelsSync(): List<com.example.data.model.AllowedYouTubeChannelEntity>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId ORDER BY allowedAt DESC")
+    suspend fun getAllChannelsForChildSync(childId: String): List<com.example.data.model.AllowedYouTubeChannelEntity>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE channelId = :channelId LIMIT 1")
+    suspend fun getChannelByIdSync(channelId: String): com.example.data.model.AllowedYouTubeChannelEntity?
 
     @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND channelName = :name LIMIT 1")
     suspend fun findChannelByName(childId: String, name: String): com.example.data.model.AllowedYouTubeChannelEntity?

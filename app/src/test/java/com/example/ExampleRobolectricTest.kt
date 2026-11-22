@@ -355,4 +355,65 @@ class ExampleRobolectricTest {
     assertTrue("Chrome Shorts URL without https must be blocked", decision.shouldBlock)
     assertEquals(com.example.service.YouTubeBlockReason.SHORTS_BLOCKED, decision.reason)
   }
+
+  @Test
+  fun `parent scanAndSyncInstalledApps fetches remotely via Supabase without local scan or crash`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.FocusSenseRepository(context)
+
+    // Invoke with blank/unknown child ID in default session state - must complete cleanly without throwing
+    repository.scanAndSyncInstalledApps(context, "591bdd02-feb9-457e-8c99-b39796bba3df")
+
+    // Schedule rules fetch must ignore internal __SYSTEM_APP_INVENTORY__ rows
+    val rules = com.example.data.remote.SupabaseClient.fetchScheduleRules("591bdd02-feb9-457e-8c99-b39796bba3df")
+    assertFalse(
+      "Internal APP_INVENTORY manifest rows must never appear as ScheduleRuleEntity",
+      rules.any { it.category.equals("APP_INVENTORY", ignoreCase = true) || it.ruleName == "__SYSTEM_APP_INVENTORY__" }
+    )
+  }
+
+  @Test
+  fun `safety alerts update, acknowledge, and study channel sync cleanly to repository and supabase`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.FocusSenseRepository(context)
+    val childId = "test-sync-child"
+
+    // 1. Add and toggle study channel -> must stay allowed and never pollute regular schedule rules
+    val ch = com.example.data.model.AllowedYouTubeChannelEntity(
+      channelId = "yt-test-study-1",
+      childId = childId,
+      channelName = "MIT OpenCourseWare",
+      handle = "@mitocw",
+      channelUrl = "https://m.youtube.com/@mitocw",
+      isAllowed = true
+    )
+    repository.addYouTubeChannel(ch)
+    repository.toggleYouTubeChannelAllowed("yt-test-study-1", true)
+
+    val rules = com.example.data.remote.SupabaseClient.fetchScheduleRules(childId)
+    assertFalse(
+      "YOUTUBE_STUDY system rows must never appear as ScheduleRuleEntity",
+      rules.any { it.category.equals("YOUTUBE_STUDY", ignoreCase = true) || it.ruleName == "__SYSTEM_YOUTUBE_STUDY_CHANNELS__" }
+    )
+
+    // 2. Safety Alert creation, acknowledgement, and deletion
+    val alertLog = repository.recordYouTubeGuardAlert(
+      childId = childId,
+      packageName = "com.google.android.youtube",
+      appName = "YouTube",
+      contentTitle = "Blocked Channel",
+      summary = "Blocked unapproved channel",
+      category = "Unapproved YouTube Channel"
+    )
+    assertTrue("Alert log must be flagged", alertLog.isFlagged)
+
+    repository.acknowledgeAlert(alertLog.logId)
+    val db = com.example.data.local.FocusSenseDatabase.getInstance(context)
+    val acked = db.activityLogDao().getLogByIdSync(alertLog.logId)
+    assertTrue("Acknowledged alert must persist as acknowledged in DB", acked?.isAcknowledged == true)
+
+    repository.removeVulnerableLog(alertLog.logId)
+    val deleted = db.activityLogDao().getLogByIdSync(alertLog.logId)
+    assertEquals("Deleted alert must be removed from DB", null, deleted)
+  }
 }

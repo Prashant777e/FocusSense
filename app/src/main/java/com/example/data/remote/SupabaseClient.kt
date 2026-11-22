@@ -532,6 +532,62 @@ object SupabaseClient {
     }
 
     /**
+     * Acknowledge a Safety Alert in Supabase fs_activity_logs (updates is_acknowledged or falls back to ai_analysis_summary marker).
+     */
+    fun acknowledgeActivityLog(logId: String): Boolean {
+        return try {
+            val validId = formatUuid(logId)
+            val ackJson = JSONObject().apply { put("is_acknowledged", true) }
+            val patchReq = newAuthRequest("fs_activity_logs?id=eq.$validId")
+                .patch(ackJson.toString().toRequestBody(jsonMediaType))
+                .build()
+            val patchResp = httpClient.newCall(patchReq).execute()
+            if (patchResp.isSuccessful) {
+                return true
+            }
+
+            // Schema fallback: if fs_activity_logs has no is_acknowledged column, tag ai_analysis_summary
+            val getReq = newAuthRequest("fs_activity_logs?id=eq.$validId&select=ai_analysis_summary&limit=1")
+                .get()
+                .build()
+            val getResp = httpClient.newCall(getReq).execute()
+            val existingSummary = if (getResp.isSuccessful) {
+                val arr = JSONArray(getResp.body?.string() ?: "[]")
+                if (arr.length() > 0) arr.getJSONObject(0).optString("ai_analysis_summary", "") else ""
+            } else ""
+            val updatedSummary = if (existingSummary.startsWith("[ACKNOWLEDGED]")) {
+                existingSummary
+            } else {
+                "[ACKNOWLEDGED] $existingSummary".trim()
+            }
+            val summaryJson = JSONObject().apply { put("ai_analysis_summary", updatedSummary) }
+            val fallbackReq = newAuthRequest("fs_activity_logs?id=eq.$validId")
+                .patch(summaryJson.toString().toRequestBody(jsonMediaType))
+                .build()
+            httpClient.newCall(fallbackReq).execute().isSuccessful
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "acknowledgeActivityLog error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Delete an Activity Log / Safety Alert from Supabase fs_activity_logs
+     */
+    fun deleteActivityLog(logId: String): Boolean {
+        return try {
+            val validId = formatUuid(logId)
+            val req = newAuthRequest("fs_activity_logs?id=eq.$validId")
+                .delete()
+                .build()
+            httpClient.newCall(req).execute().isSuccessful
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "deleteActivityLog error: ${e.message}")
+            false
+        }
+    }
+
+    /**
      * Upload GPS location fix to Supabase fs_location_logs
      */
     fun pushLocation(point: LocationPointEntity, childId: String, deviceId: String? = null): Boolean {
@@ -685,12 +741,21 @@ object SupabaseClient {
             val list = mutableListOf<com.example.data.model.ScheduleRuleEntity>()
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
+                val ruleType = obj.optString("rule_type", "General")
+                val ruleName = obj.optString("rule_name", "Rule")
+                if (ruleType.equals("APP_INVENTORY", ignoreCase = true) ||
+                    ruleType.equals("YOUTUBE_STUDY", ignoreCase = true) ||
+                    ruleName == "__SYSTEM_APP_INVENTORY__" ||
+                    ruleName == "__SYSTEM_YOUTUBE_STUDY_CHANNELS__"
+                ) {
+                    continue
+                }
                 list.add(
                     com.example.data.model.ScheduleRuleEntity(
                         ruleId = obj.getString("id"),
                         childId = validChildId,
-                        ruleName = obj.optString("rule_name", "Rule"),
-                        category = obj.optString("rule_type", "General"),
+                        ruleName = ruleName,
+                        category = ruleType,
                         startTime = obj.optString("start_time", "08:00").take(5),
                         endTime = obj.optString("end_time", "17:00").take(5),
                         dayOfWeek = obj.optString("days_of_week", "Mon,Tue,Wed,Thu,Fri,Sat,Sun"),
@@ -705,5 +770,302 @@ object SupabaseClient {
             emptyList()
         }
     }
+
+    /**
+     * Push Child phone's installed applications to Supabase (tries fs_installed_apps, falls back to fs_schedule_rules manifest row).
+     */
+    fun pushInstalledApps(
+        apps: List<com.example.data.model.InstalledAppEntity>,
+        childId: String
+    ): Boolean {
+        return try {
+            val validChildId = normalizeChildId(childId) ?: return false
+            val now = isoNow()
+            val cappedApps = apps.take(120)
+
+            // 1. Try dedicated fs_installed_apps table if present in Supabase
+            try {
+                val rows = JSONArray()
+                for (app in cappedApps) {
+                    rows.put(JSONObject().apply {
+                        put("id", formatUuid("${validChildId}_${app.packageName}"))
+                        put("child_id", validChildId)
+                        put("package_name", app.packageName)
+                        put("app_name", app.appName)
+                        put("category", app.category)
+                        put("is_blocked", app.isBlocked)
+                        put("updated_at", now)
+                    })
+                }
+                val directReq = newAuthRequest("fs_installed_apps")
+                    .addHeader("Prefer", "resolution=merge-duplicates")
+                    .post(rows.toString().toRequestBody(jsonMediaType))
+                    .build()
+                val directResp = httpClient.newCall(directReq).execute()
+                if (directResp.isSuccessful) {
+                    return true
+                }
+            } catch (_: Exception) {}
+
+            // 2. Fallback: persist compact JSON manifest inside inactive APP_INVENTORY row in fs_schedule_rules
+            val compactArray = JSONArray()
+            for (app in cappedApps) {
+                compactArray.put(JSONObject().apply {
+                    put("p", app.packageName)
+                    put("n", app.appName)
+                    put("c", app.category)
+                    put("b", app.isBlocked)
+                })
+            }
+            val manifestJson = JSONObject().apply {
+                put("id", formatUuid("app-inventory-$validChildId"))
+                put("child_id", validChildId)
+                put("rule_name", "__SYSTEM_APP_INVENTORY__")
+                put("rule_type", "APP_INVENTORY")
+                put("target_package", compactArray.toString())
+                put("days_of_week", "SYSTEM")
+                put("start_time", "00:00:00")
+                put("end_time", "00:00:00")
+                put("is_active", false)
+                put("version", 1)
+                put("updated_at", now)
+            }
+            val req = newAuthRequest("fs_schedule_rules")
+                .addHeader("Prefer", "resolution=merge-duplicates")
+                .post(manifestJson.toString().toRequestBody(jsonMediaType))
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            resp.isSuccessful
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "pushInstalledApps error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Fetch Child phone's remote installed application inventory from Supabase for Parent Dashboard.
+     */
+    fun fetchInstalledApps(childId: String): List<com.example.data.model.InstalledAppEntity> {
+        return try {
+            val validChildId = normalizeChildId(childId) ?: return emptyList()
+
+            // 1. Try dedicated fs_installed_apps table first
+            try {
+                val directReq = newAuthRequest("fs_installed_apps?child_id=eq.$validChildId&order=app_name.asc")
+                    .get()
+                    .build()
+                val directResp = httpClient.newCall(directReq).execute()
+                if (directResp.isSuccessful) {
+                    val arr = JSONArray(directResp.body?.string() ?: "[]")
+                    val list = mutableListOf<com.example.data.model.InstalledAppEntity>()
+                    val targetChildId = childId.ifBlank { validChildId }
+                    val now = System.currentTimeMillis()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val pkg = obj.optString("package_name")
+                        if (pkg.isBlank()) continue
+                        list.add(
+                            com.example.data.model.InstalledAppEntity(
+                                id = "${targetChildId}_$pkg",
+                                childId = targetChildId,
+                                packageName = pkg,
+                                appName = obj.optString("app_name", pkg),
+                                category = obj.optString("category", "General"),
+                                isBlocked = obj.optBoolean("is_blocked", false),
+                                lastUpdated = now
+                            )
+                        )
+                    }
+                    if (list.isNotEmpty()) return list
+                }
+            } catch (_: Exception) {}
+
+            // 2. Fallback: read APP_INVENTORY manifest row from fs_schedule_rules
+            val req = newAuthRequest("fs_schedule_rules?child_id=eq.$validChildId&rule_type=eq.APP_INVENTORY&limit=1")
+                .get()
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            if (!resp.isSuccessful) return emptyList()
+            val arr = JSONArray(resp.body?.string() ?: "[]")
+            if (arr.length() == 0) return emptyList()
+
+            val payloadStr = arr.getJSONObject(0).optString("target_package", "")
+            if (!payloadStr.startsWith("[")) return emptyList()
+            val items = JSONArray(payloadStr)
+            val result = mutableListOf<com.example.data.model.InstalledAppEntity>()
+            val targetChildId = childId.ifBlank { validChildId }
+            val now = System.currentTimeMillis()
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i)
+                val pkg = item.optString("p")
+                if (pkg.isBlank()) continue
+                result.add(
+                    com.example.data.model.InstalledAppEntity(
+                        id = "${targetChildId}_$pkg",
+                        childId = targetChildId,
+                        packageName = pkg,
+                        appName = item.optString("n", pkg),
+                        category = item.optString("c", "General"),
+                        isBlocked = item.optBoolean("b", false),
+                        lastUpdated = now
+                    )
+                )
+            }
+            result
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchInstalledApps error: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Push allowed YouTube Study channels to Supabase (tries fs_allowed_youtube_channels, falls back to fs_schedule_rules YOUTUBE_STUDY row).
+     */
+    fun pushAllowedYouTubeChannels(
+        channels: List<com.example.data.model.AllowedYouTubeChannelEntity>,
+        childId: String
+    ): Boolean {
+        return try {
+            val validChildId = normalizeChildId(childId) ?: return false
+            val now = isoNow()
+
+            // 1. Try dedicated fs_allowed_youtube_channels table if present in Supabase
+            try {
+                if (channels.isNotEmpty()) {
+                    val rows = JSONArray()
+                    for (ch in channels) {
+                        rows.put(JSONObject().apply {
+                            put("id", formatUuid("${validChildId}_${ch.channelId}"))
+                            put("child_id", validChildId)
+                            put("channel_id", ch.channelId)
+                            put("channel_name", ch.channelName)
+                            put("handle", ch.handle)
+                            put("category", ch.category)
+                            put("channel_url", ch.channelUrl)
+                            put("is_allowed", ch.isAllowed)
+                            put("updated_at", now)
+                        })
+                    }
+                    val directReq = newAuthRequest("fs_allowed_youtube_channels")
+                        .addHeader("Prefer", "resolution=merge-duplicates")
+                        .post(rows.toString().toRequestBody(jsonMediaType))
+                        .build()
+                    val directResp = httpClient.newCall(directReq).execute()
+                    if (directResp.isSuccessful) {
+                        return true
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // 2. Fallback: persist compact JSON whitelist inside inactive YOUTUBE_STUDY row in fs_schedule_rules
+            val compactArray = JSONArray()
+            for (ch in channels) {
+                compactArray.put(JSONObject().apply {
+                    put("id", ch.channelId)
+                    put("n", ch.channelName)
+                    put("h", ch.handle)
+                    put("c", ch.category)
+                    put("u", ch.channelUrl)
+                    put("a", ch.isAllowed)
+                })
+            }
+            val manifestJson = JSONObject().apply {
+                put("id", formatUuid("youtube-study-$validChildId"))
+                put("child_id", validChildId)
+                put("rule_name", "__SYSTEM_YOUTUBE_STUDY_CHANNELS__")
+                put("rule_type", "YOUTUBE_STUDY")
+                put("target_package", compactArray.toString())
+                put("days_of_week", "SYSTEM")
+                put("start_time", "00:00:00")
+                put("end_time", "00:00:00")
+                put("is_active", false)
+                put("version", 1)
+                put("updated_at", now)
+            }
+            val req = newAuthRequest("fs_schedule_rules")
+                .addHeader("Prefer", "resolution=merge-duplicates")
+                .post(manifestJson.toString().toRequestBody(jsonMediaType))
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            resp.isSuccessful
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "pushAllowedYouTubeChannels error: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Fetch allowed YouTube Study channels for child from Supabase.
+     */
+    fun fetchAllowedYouTubeChannels(childId: String): List<com.example.data.model.AllowedYouTubeChannelEntity> {
+        return try {
+            val validChildId = normalizeChildId(childId) ?: return emptyList()
+            val targetChildId = childId.ifBlank { validChildId }
+
+            // 1. Try dedicated fs_allowed_youtube_channels table first
+            try {
+                val directReq = newAuthRequest("fs_allowed_youtube_channels?child_id=eq.$validChildId")
+                    .get()
+                    .build()
+                val directResp = httpClient.newCall(directReq).execute()
+                if (directResp.isSuccessful) {
+                    val arr = JSONArray(directResp.body?.string() ?: "[]")
+                    val list = mutableListOf<com.example.data.model.AllowedYouTubeChannelEntity>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        val name = obj.optString("channel_name")
+                        if (name.isBlank()) continue
+                        list.add(
+                            com.example.data.model.AllowedYouTubeChannelEntity(
+                                channelId = obj.optString("channel_id", obj.optString("id")),
+                                childId = targetChildId,
+                                channelName = name,
+                                handle = obj.optString("handle", ""),
+                                category = obj.optString("category", "Study & Focus"),
+                                channelUrl = obj.optString("channel_url", ""),
+                                isAllowed = obj.optBoolean("is_allowed", true)
+                            )
+                        )
+                    }
+                    if (list.isNotEmpty()) return list
+                }
+            } catch (_: Exception) {}
+
+            // 2. Fallback: read YOUTUBE_STUDY row from fs_schedule_rules
+            val req = newAuthRequest("fs_schedule_rules?child_id=eq.$validChildId&rule_type=eq.YOUTUBE_STUDY&limit=1")
+                .get()
+                .build()
+            val resp = httpClient.newCall(req).execute()
+            if (!resp.isSuccessful) return emptyList()
+            val arr = JSONArray(resp.body?.string() ?: "[]")
+            if (arr.length() == 0) return emptyList()
+
+            val payloadStr = arr.getJSONObject(0).optString("target_package", "")
+            if (!payloadStr.startsWith("[")) return emptyList()
+            val items = JSONArray(payloadStr)
+            val result = mutableListOf<com.example.data.model.AllowedYouTubeChannelEntity>()
+            for (i in 0 until items.length()) {
+                val item = items.getJSONObject(i)
+                val name = item.optString("n")
+                if (name.isBlank()) continue
+                result.add(
+                    com.example.data.model.AllowedYouTubeChannelEntity(
+                        channelId = item.optString("id", "yt_${targetChildId}_$i"),
+                        childId = targetChildId,
+                        channelName = name,
+                        handle = item.optString("h", ""),
+                        category = item.optString("c", "Study & Focus"),
+                        channelUrl = item.optString("u", ""),
+                        isAllowed = item.optBoolean("a", true)
+                    )
+                )
+            }
+            result
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "fetchAllowedYouTubeChannels error: ${e.message}")
+            emptyList()
+        }
+    }
 }
+
 

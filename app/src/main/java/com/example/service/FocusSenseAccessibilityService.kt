@@ -46,6 +46,7 @@ class FocusSenseAccessibilityService : AccessibilityService() {
     private var lastExtractedText = ""
     private var lastAnalyzedTime = 0L
     private var lastYouTubeCheckTime = 0L
+    private var lastYouTubeAlertTime = 0L
     private var lastPkgName = ""
 
     override fun onServiceConnected() {
@@ -187,6 +188,17 @@ class FocusSenseAccessibilityService : AccessibilityService() {
                         YouTubeBlockReason.NONE -> return@launch
                     }
                     _lastBlockedApp.value = "$appLabel ($catLabel)"
+                    if (now - lastYouTubeAlertTime >= 15000L) {
+                        lastYouTubeAlertTime = now
+                        app.repository.recordYouTubeGuardAlert(
+                            childId = currentChildId,
+                            packageName = pkgName,
+                            appName = appLabel,
+                            contentTitle = ruleTitle,
+                            summary = decision.detail,
+                            category = catLabel
+                        )
+                    }
                     withContext(Dispatchers.Main) {
                         launchBlockScreen(
                             packageName = pkgName,
