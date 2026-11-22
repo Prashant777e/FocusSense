@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -46,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -214,27 +216,45 @@ fun AddScheduleRuleDialog(
         mutableStateOf(existingRule?.startTime == "00:00" && (existingRule?.endTime == "23:59" || existingRule?.endTime == "00:00"))
     }
 
+    val existingRawTokens = remember(existingRule) {
+        existingRule?.restrictedPackages?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
+    }
+    var youtubeStudyMode by remember {
+        mutableStateOf(
+            existingRawTokens.any { com.example.service.YouTubeContentGuard.isYouTubeWhitelistToken(it) }
+        )
+    }
+    var youtubeAllowedChannelsText by remember {
+        mutableStateOf(
+            existingRule?.let {
+                com.example.service.YouTubeContentGuard.parseRuleWhitelistChannels(it.restrictedPackages)
+                    .joinToString(", ")
+            } ?: ""
+        )
+    }
+
     val availableApps: List<RestrictedAppInfo> = remember(installedApps) {
-        val raw = if (installedApps.isNotEmpty()) {
-            installedApps
+        if (installedApps.isNotEmpty()) {
+            installedApps.map { app ->
+                RestrictedAppInfo(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    iconName = "app",
+                    category = app.category,
+                    isInstalledOnDevice = true
+                )
+            }
         } else {
-            com.example.util.InstalledAppScanner.getInstalledLauncherApps(context, "child-default")
-        }
-        raw.map { app ->
-            RestrictedAppInfo(
-                packageName = app.packageName,
-                appName = app.appName,
-                iconName = "app",
-                category = app.category,
-                isInstalledOnDevice = true
-            )
+            // Never scan the Parent device's local packages; use common restricted presets until Child syncs
+            com.example.data.model.PREDEFINED_RESTRICTED_APPS
         }
     }
 
     val selectedPackages = remember {
         mutableStateListOf<String>().apply {
-            val initial = existingRule?.restrictedPackages?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
-                ?: emptyList()
+            val initial = existingRawTokens.filterNot {
+                com.example.service.YouTubeContentGuard.isYouTubeWhitelistToken(it)
+            }
             addAll(initial)
         }
     }
@@ -249,7 +269,7 @@ fun AddScheduleRuleDialog(
         }
     }
 
-    val categories = listOf("Homework", "Study", "Bedtime", "Outdoor", "Free Time")
+    val categories = listOf("Homework", "Study", "YouTube Study", "Bedtime", "Outdoor", "Free Time")
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -434,7 +454,83 @@ fun AddScheduleRuleDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // YouTube Study Whitelist Mode (Allows native YouTube ONLY for study channels & blocks Shorts)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (youtubeStudyMode) EmeraldSafe.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    border = if (youtubeStudyMode) androidx.compose.foundation.BorderStroke(1.dp, EmeraldSafe.copy(alpha = 0.5f)) else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            youtubeStudyMode = !youtubeStudyMode
+                            if (youtubeStudyMode) {
+                                selectedPackages.removeAll { it.equals("com.google.android.youtube", ignoreCase = true) }
+                            }
+                        }
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VideoLibrary,
+                                    contentDescription = null,
+                                    tint = if (youtubeStudyMode) EmeraldSafe else IndigoPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "YouTube Study Channels Only",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Allows YouTube app only for approved channels; blocks Shorts & other channels.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = youtubeStudyMode,
+                                onCheckedChange = { enabled ->
+                                    youtubeStudyMode = enabled
+                                    if (enabled) {
+                                        selectedPackages.removeAll { it.equals("com.google.android.youtube", ignoreCase = true) }
+                                    }
+                                },
+                                modifier = Modifier.testTag("youtube_study_whitelist_switch")
+                            )
+                        }
+
+                        if (youtubeStudyMode) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = youtubeAllowedChannelsText,
+                                onValueChange = { youtubeAllowedChannelsText = it },
+                                label = { Text("Allowed Channels (optional, comma-separated)", fontSize = 11.sp) },
+                                placeholder = { Text("e.g. take U forward, Khan Academy", fontSize = 11.sp) },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("youtube_whitelist_channels_input")
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
 
                 val selectedCount = selectedPackages.size
                 val totalCount = availableApps.size
@@ -574,8 +670,22 @@ fun AddScheduleRuleDialog(
                     Button(
                         onClick = {
                             if (ruleName.isNotBlank()) {
-                                val packagesToSave = if (selectedPackages.isNotEmpty()) {
-                                    selectedPackages.joinToString(",")
+                                val finalList = selectedPackages.toMutableList()
+                                if (youtubeStudyMode) {
+                                    finalList.removeAll { it.equals("com.google.android.youtube", ignoreCase = true) }
+                                    val cleanChannels = youtubeAllowedChannelsText
+                                        .split(",")
+                                        .map { it.trim() }
+                                        .filter { it.isNotBlank() }
+                                    val ytToken = if (cleanChannels.isNotEmpty()) {
+                                        "com.google.android.youtube:whitelist:${cleanChannels.joinToString("|")}"
+                                    } else {
+                                        "com.google.android.youtube:whitelist"
+                                    }
+                                    finalList.add(ytToken)
+                                }
+                                val packagesToSave = if (finalList.isNotEmpty()) {
+                                    finalList.joinToString(",")
                                 } else {
                                     // If no apps selected, default to '*' (all non-essential apps)
                                     "*"

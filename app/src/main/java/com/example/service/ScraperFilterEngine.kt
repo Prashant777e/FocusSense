@@ -172,13 +172,24 @@ object ScraperFilterEngine {
                 continue
             }
 
-            // Extract Browser URLs
+            // Extract Browser URLs (including Chrome/browser url_bar URLs that omit https://)
             val urlMatcher = URL_PATTERN.matcher(text)
             while (urlMatcher.find()) {
                 val url = urlMatcher.group()
                 if (!extractedUrls.contains(url)) {
                     extractedUrls.add(url)
                 }
+            }
+            val lowerNodeText = text.lowercase()
+            val isUrlBar = node.viewId?.contains("url_bar", ignoreCase = true) == true ||
+                node.viewId?.contains("location_bar", ignoreCase = true) == true ||
+                node.viewId?.contains("omnibox", ignoreCase = true) == true
+            if ((isUrlBar || lowerNodeText.contains("youtube.com") || lowerNodeText.contains("youtu.be")) &&
+                !text.contains(" ") &&
+                text.contains(".") &&
+                !extractedUrls.contains(text)
+            ) {
+                extractedUrls.add(text)
             }
 
             retainedStrings.add(text)

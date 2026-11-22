@@ -88,17 +88,21 @@ class MainActivity : ComponentActivity() {
         FocusSenseViewModelFactory((application as FocusSenseApplication).repository)
     }
 
+    private var openAllowedChannelsTrigger by mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val openAllowedChannels = intent?.getBooleanExtra("extra_open_allowed_channels", false) == true
+        if (intent?.getBooleanExtra("extra_open_allowed_channels", false) == true) {
+            openAllowedChannelsTrigger++
+        }
 
         setContent {
             MyApplicationTheme {
                 FocusSenseApp(
                     viewModel = viewModel,
-                    initialOpenAllowedChannels = openAllowedChannels
+                    openAllowedChannelsTrigger = openAllowedChannelsTrigger
                 )
             }
         }
@@ -107,13 +111,16 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra("extra_open_allowed_channels", false)) {
+            openAllowedChannelsTrigger++
+        }
     }
 }
 
 @Composable
 fun FocusSenseApp(
     viewModel: FocusSenseViewModel,
-    initialOpenAllowedChannels: Boolean = false
+    openAllowedChannelsTrigger: Int = 0
 ) {
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val isSessionReady by viewModel.isSessionReady.collectAsStateWithLifecycle()
@@ -186,10 +193,10 @@ fun FocusSenseApp(
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val isSearchingChannels by viewModel.isSearchingChannels.collectAsStateWithLifecycle()
 
-    var childInitialTab by remember { mutableIntStateOf(0) }
-    LaunchedEffect(initialOpenAllowedChannels) {
-        if (initialOpenAllowedChannels) {
-            childInitialTab = 0
+    var childTabRequestNonce by remember { mutableIntStateOf(openAllowedChannelsTrigger) }
+    LaunchedEffect(openAllowedChannelsTrigger) {
+        if (openAllowedChannelsTrigger > 0) {
+            childTabRequestNonce++
         }
     }
 
@@ -330,7 +337,8 @@ fun FocusSenseApp(
                     onSearchChannels = { query -> viewModel.searchChannels(query) },
                     onClearSearch = { viewModel.clearSearchResults() },
                     onAddChannelFromSearch = { result -> viewModel.addAllowedChannel(result) },
-                    initialTab = childInitialTab,
+                    initialTab = 0,
+                    tabResetNonce = childTabRequestNonce,
                     onToggleYouTubeChannelAllowed = { channelId, isAllowed ->
                         viewModel.toggleYouTubeChannelAllowed(channelId, isAllowed)
                     },
@@ -368,7 +376,7 @@ fun FocusSenseApp(
                     },
                     onSeeAllowedChannels = {
                         viewModel.dismissRestrictionOverlay()
-                        childInitialTab = 0
+                        childTabRequestNonce++
                     }
                 )
             }

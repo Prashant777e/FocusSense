@@ -109,6 +109,7 @@ fun ChildDashboardScreen(
     onClearSearch: () -> Unit = {},
     onAddChannelFromSearch: (com.example.data.remote.YouTubeChannelSearchResult) -> Unit = {},
     initialTab: Int = 0,
+    tabResetNonce: Int = 0,
     onStartPomodoro: (pkg: String, name: String, mins: Int) -> Unit = { _, _, _ -> },
     onPausePomodoro: () -> Unit = {},
     onResumePomodoro: () -> Unit = {},
@@ -140,7 +141,7 @@ fun ChildDashboardScreen(
 
     // Default tab: 0 = YouTube Focus Lounge
     var selectedTab by remember { mutableIntStateOf(initialTab) }
-    androidx.compose.runtime.LaunchedEffect(initialTab) {
+    androidx.compose.runtime.LaunchedEffect(initialTab, tabResetNonce) {
         selectedTab = initialTab
     }
 
@@ -284,6 +285,7 @@ fun ChildDashboardScreen(
                 when (selectedTab) {
                     // TAB 0: YouTube Focus & Channel Whitelist Player (Real YouTube, zero default channels, Shorts blocked)
                     0 -> FocusYouTubeScreen(
+                        childId = currentChild?.userId ?: "child-default",
                         channels = allowedYouTubeChannels,
                         searchResults = searchResults,
                         isSearching = isSearchingChannels,
@@ -465,8 +467,16 @@ private fun ChildRuleCard(rule: ScheduleRuleEntity) {
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         shape = RoundedCornerShape(6.dp)
                     ) {
+                        val formattedRestrictions = rule.restrictedPackages.split(",")
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                            .joinToString(", ") { token ->
+                                if (com.example.service.YouTubeContentGuard.isYouTubeWhitelistToken(token)) {
+                                    "YouTube (Study Channels • No Shorts)"
+                                } else token
+                            }
                         Text(
-                            text = "Restricted: ${rule.restrictedPackages}",
+                            text = "Restricted: $formattedRestrictions",
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),

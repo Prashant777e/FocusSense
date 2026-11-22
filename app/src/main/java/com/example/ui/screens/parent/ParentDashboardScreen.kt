@@ -1045,6 +1045,14 @@ private fun ScheduleRuleCard(
                 restrictedApps.forEach { pkg ->
                     val foundApp = installedApps.find { it.packageName.equals(pkg, ignoreCase = true) }
                     val simpleName = when {
+                        com.example.service.YouTubeContentGuard.isYouTubeWhitelistToken(pkg) -> {
+                            val channels = com.example.service.YouTubeContentGuard.parseRuleWhitelistChannels(pkg)
+                            if (channels.isNotEmpty()) {
+                                "YouTube Study Only (${channels.joinToString(", ")})"
+                            } else {
+                                "YouTube (Study Channels • No Shorts)"
+                            }
+                        }
                         pkg == "*" || pkg == "all" -> "All Apps (*)"
                         foundApp != null -> foundApp.appName
                         pkg.contains("youtube") -> "YouTube"

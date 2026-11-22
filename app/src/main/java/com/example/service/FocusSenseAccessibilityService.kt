@@ -45,17 +45,20 @@ class FocusSenseAccessibilityService : AccessibilityService() {
     private val scope = CoroutineScope(Dispatchers.IO)
     private var lastExtractedText = ""
     private var lastAnalyzedTime = 0L
+    private var lastYouTubeCheckTime = 0L
     private var lastPkgName = ""
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         _isServiceRunning.value = true
-        Log.i(TAG, "FocusSense Accessibility Sentinel Connected with Tier 1/2 Scraper Engine.")
+        Log.i(TAG, "FocusSense Accessibility Sentinel Connected with Tier 1/2 Scraper & YouTube Shield.")
 
         val app = application as? FocusSenseApplication ?: return
         scope.launch {
             app.repository.eventStream.collect { event ->
                 if (event is SentinelEvent.ContentFlagged) {
+                    val user = app.repository.currentUser.value
+                    if (user == null || !user.role.equals("child", ignoreCase = true)) return@collect
                     val analysis = event.threatResult
                     if (analysis.isFlagged) {
                         withContext(Dispatchers.Main) {
@@ -78,8 +81,8 @@ class FocusSenseAccessibilityService : AccessibilityService() {
 
         val app = application as? FocusSenseApplication ?: return
         val currentUser = app.repository.currentUser.value
-        if (currentUser?.role.equals("parent", ignoreCase = true)) {
-            // Parent devices must never be restricted, blocked, or monitored for blocking rules
+        // Strictly restrict monitoring & blocking to authenticated Child accounts only
+        if (currentUser == null || !currentUser.role.equals("child", ignoreCase = true)) {
             return
         }
 
@@ -88,6 +91,7 @@ class FocusSenseAccessibilityService : AccessibilityService() {
         if (pkgName != lastPkgName) {
             lastPkgName = pkgName
             lastExtractedText = ""
+            lastYouTubeCheckTime = 0L
         }
 
         _metrics.value = _metrics.value.copy(
@@ -102,12 +106,11 @@ class FocusSenseAccessibilityService : AccessibilityService() {
             return
         }
 
-        val currentChildId = app.repository.selectedChildId.value
+        val currentChildId = currentUser.userId.ifBlank { app.repository.selectedChildId.value }
 
-        // 1. Instant Synchronous Check (0ms latency from in-memory cache)
+        // 1. Instant Synchronous Whole-App Check (0ms latency from in-memory cache)
         val appLabel = getAppLabel(pkgName)
-        val isParent = app.repository.currentUser.value?.role == "parent"
-        if (!isParent && app.repository.isPackageBlockedSync(pkgName)) {
+        if (app.repository.isPackageBlockedSync(pkgName)) {
             launchBlockScreen(
                 packageName = pkgName,
                 appName = appLabel,
@@ -119,29 +122,31 @@ class FocusSenseAccessibilityService : AccessibilityService() {
             return
         }
 
-        // 2. Curfew & Schedule Enforcement Check
+        // 2. Curfew & Schedule Enforcement Check (whole-app curfews)
         scope.launch {
-            val isParent = app.repository.currentUser.value?.role == "parent"
-            if (!isParent) {
-                val restriction = app.repository.checkAppRestriction(currentChildId, pkgName)
-                if (restriction.isBlocked) {
-                    _lastBlockedApp.value = restriction.restrictedAppName
-                    withContext(Dispatchers.Main) {
-                        launchBlockScreen(
-                            packageName = pkgName,
-                            appName = appLabel,
-                            ruleName = restriction.ruleName,
-                            category = restriction.category,
-                            endTime = restriction.endTime
-                        )
-                    }
+            val activeUser = app.repository.currentUser.value
+            if (activeUser == null || !activeUser.role.equals("child", ignoreCase = true)) return@launch
+            val restriction = app.repository.checkAppRestriction(currentChildId, pkgName)
+            if (restriction.isBlocked) {
+                _lastBlockedApp.value = restriction.restrictedAppName
+                withContext(Dispatchers.Main) {
+                    launchBlockScreen(
+                        packageName = pkgName,
+                        appName = appLabel,
+                        ruleName = restriction.ruleName,
+                        category = restriction.category,
+                        endTime = restriction.endTime
+                    )
                 }
             }
         }
 
-        // 2. Debounce rapid scrolling/typing events (1500ms debounce)
         val now = System.currentTimeMillis()
-        if (now - lastAnalyzedTime < 1500) {
+        val isYtOrBrowser = YouTubeContentGuard.isYouTubePackage(pkgName) || ScraperFilterEngine.isKnownBrowser(pkgName)
+        val needsYouTubeCheck = isYtOrBrowser && (now - lastYouTubeCheckTime >= 350)
+        val needsThreatAnalysis = (now - lastAnalyzedTime >= 1500)
+
+        if (!needsYouTubeCheck && !needsThreatAnalysis) {
             return
         }
 
@@ -149,13 +154,56 @@ class FocusSenseAccessibilityService : AccessibilityService() {
         val rawNodes = mutableListOf<NodeTextData>()
         traverseNodes(rootNode, rawNodes)
 
-        // Tier 1 & Tier 2: Filter and classify window nodes
         val filterResult = ScraperFilterEngine.filterAndClassifyWindow(
             packageName = pkgName,
             ownPackage = packageName,
             className = event.className?.toString(),
             nodes = rawNodes
         )
+
+        // 3. Fast YouTube Shorts & Channel Whitelist Check (Native YouTube app & Browsers)
+        if (needsYouTubeCheck) {
+            lastYouTubeCheckTime = now
+            val capturedNodes = rawNodes.toList()
+            val capturedUrls = filterResult.extractedUrls
+            scope.launch {
+                val activeUser = app.repository.currentUser.value
+                if (activeUser == null || !activeUser.role.equals("child", ignoreCase = true)) return@launch
+                val decision = app.repository.checkYouTubeContentRestriction(
+                    childId = currentChildId,
+                    packageName = pkgName,
+                    nodes = capturedNodes,
+                    extractedUrls = capturedUrls
+                )
+                if (decision.shouldBlock) {
+                    val allowedSummary = app.repository.getAllowedYouTubeChannelNamesSummary(currentChildId)
+                    val (ruleTitle, catLabel) = when (decision.reason) {
+                        YouTubeBlockReason.SHORTS_BLOCKED ->
+                            "YouTube Shorts Shield" to "YouTube Shorts Blocked"
+                        YouTubeBlockReason.UNAPPROVED_CHANNEL -> {
+                            val who = decision.detectedChannel?.takeIf { it.isNotBlank() } ?: "Other Channel"
+                            "Study Channels Only ($who Blocked)" to "Unapproved YouTube Channel"
+                        }
+                        YouTubeBlockReason.NONE -> return@launch
+                    }
+                    _lastBlockedApp.value = "$appLabel ($catLabel)"
+                    withContext(Dispatchers.Main) {
+                        launchBlockScreen(
+                            packageName = pkgName,
+                            appName = appLabel,
+                            ruleName = ruleTitle,
+                            category = catLabel,
+                            endTime = "Allowed: $allowedSummary"
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Tier 1 & Tier 2 Threat Evaluation (1500ms debounced)
+        if (!needsThreatAnalysis) {
+            return
+        }
 
         if (filterResult.isIgnored) {
             _metrics.value = _metrics.value.copy(

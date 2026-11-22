@@ -98,6 +98,7 @@ import com.example.ui.theme.PurpleAccent
 
 @Composable
 fun FocusYouTubeScreen(
+    childId: String = "child-default",
     channels: List<AllowedYouTubeChannelEntity>,
     searchResults: List<YouTubeChannelSearchResult>,
     isSearching: Boolean,
@@ -114,22 +115,34 @@ fun FocusYouTubeScreen(
 
     // Search query state
     var searchQuery by remember { mutableStateOf("") }
-    var shortsBlockedNotice by remember { mutableStateOf<String?>(null) }
+    var shieldBlockedNotice by remember { mutableStateOf<String?>(null) }
 
     if (activeChannelForView != null && activeUrlForView != null) {
         BackHandler {
             activeChannelForView = null
             activeUrlForView = null
         }
+        val activePool = remember(channels, activeChannelForView) {
+            (channels.filter { it.isAllowed } + listOfNotNull(activeChannelForView))
+                .distinctBy { it.channelId }
+        }
         RealYouTubeChannelFullView(
             channel = activeChannelForView!!,
+            allowedChannels = activePool,
             initialUrl = activeUrlForView!!,
             onClose = {
                 activeChannelForView = null
                 activeUrlForView = null
             },
             onShortsBlocked = {
-                shortsBlockedNotice = "🚫 YouTube Shorts are blocked by ReGain Focus Shield!"
+                shieldBlockedNotice = "YouTube Shorts are blocked by FocusSense Study Shield."
+            },
+            onChannelBlocked = { blockedName ->
+                shieldBlockedNotice = if (blockedName.isNotBlank()) {
+                    "'$blockedName' is blocked. Only your allowed study channels are permitted."
+                } else {
+                    "Only your allowed study channels are permitted. Navigation to other channels is blocked."
+                }
             }
         )
     } else {
@@ -281,7 +294,7 @@ fun FocusYouTubeScreen(
                         onViewVideos = {
                             val tempChannel = AllowedYouTubeChannelEntity(
                                 channelId = result.channelId,
-                                childId = "child-default",
+                                childId = childId,
                                 channelName = result.title,
                                 handle = result.handle,
                                 description = result.description,
@@ -352,10 +365,10 @@ fun FocusYouTubeScreen(
         }
     }
 
-    // Modal when shorts or distraction is blocked
-    shortsBlockedNotice?.let { msg ->
+    // Modal when shorts or unapproved channel distraction is blocked
+    shieldBlockedNotice?.let { msg ->
         AlertDialog(
-            onDismissRequest = { shortsBlockedNotice = null },
+            onDismissRequest = { shieldBlockedNotice = null },
             icon = {
                 Box(
                     modifier = Modifier
@@ -368,7 +381,7 @@ fun FocusYouTubeScreen(
                 }
             },
             title = {
-                Text("ReGain Focus Shield Active", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text("FocusSense Study Shield", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             },
             text = {
                 Text(
@@ -380,7 +393,7 @@ fun FocusYouTubeScreen(
             },
             confirmButton = {
                 Button(
-                    onClick = { shortsBlockedNotice = null },
+                    onClick = { shieldBlockedNotice = null },
                     colors = ButtonDefaults.buttonColors(containerColor = IndigoPrimary),
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -657,13 +670,33 @@ private fun AllowedChannelCard(
 // -------------------------------------------------------------------------
 // REAL YOUTUBE FULL VIEW (DIRECTLY JUMPS INTO YOUTUBER'S PLAYLISTS/VIDEOS)
 // -------------------------------------------------------------------------
-@SuppressLint("SetJavaScriptEnabled")
+private class YouTubeShieldJsBridge(
+    private val onShortsTriggered: () -> Unit,
+    private val onChannelTriggered: (String) -> Unit
+) {
+    @android.webkit.JavascriptInterface
+    fun onShortsDetected() {
+        onShortsTriggered()
+    }
+
+    @android.webkit.JavascriptInterface
+    fun onOtherChannelDetected(channelName: String) {
+        onChannelTriggered(channelName)
+    }
+}
+
+// -------------------------------------------------------------------------
+// REAL YOUTUBE FULL VIEW (DIRECTLY JUMPS INTO YOUTUBER'S PLAYLISTS/VIDEOS)
+// -------------------------------------------------------------------------
+@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun RealYouTubeChannelFullView(
     channel: AllowedYouTubeChannelEntity,
+    allowedChannels: List<AllowedYouTubeChannelEntity> = listOf(channel),
     initialUrl: String,
     onClose: () -> Unit,
-    onShortsBlocked: () -> Unit
+    onShortsBlocked: () -> Unit,
+    onChannelBlocked: (String) -> Unit = {}
 ) {
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var currentUrl by remember { mutableStateOf(initialUrl) }
@@ -672,6 +705,10 @@ fun RealYouTubeChannelFullView(
     var canGoBack by remember { mutableStateOf(false) }
 
     val handleClean = channel.handle.removePrefix("@").trim()
+    val allowedTokens = remember(allowedChannels) {
+        allowedChannels.flatMap { com.example.service.YouTubeContentGuard.extractChannelTokens(it) }
+            .distinct()
+    }
 
     Column(
         modifier = Modifier
@@ -806,7 +843,7 @@ fun RealYouTubeChannelFullView(
             }
         }
 
-        // Real YouTube Full Screen Web View with ReGain Distraction-Free Script Injection
+        // Real YouTube Full Screen Web View with FocusSense Distraction-Free Script Injection
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -827,6 +864,24 @@ fun RealYouTubeChannelFullView(
                         settings.displayZoomControls = false
                         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
+                        val bridge = YouTubeShieldJsBridge(
+                            onShortsTriggered = {
+                                post {
+                                    stopLoading()
+                                    if (canGoBack()) goBack() else loadUrl(initialUrl)
+                                    onShortsBlocked()
+                                }
+                            },
+                            onChannelTriggered = { detectedName ->
+                                post {
+                                    stopLoading()
+                                    if (canGoBack()) goBack() else loadUrl(initialUrl)
+                                    onChannelBlocked(detectedName)
+                                }
+                            }
+                        )
+                        addJavascriptInterface(bridge, "AndroidFocusBridge")
+
                         webChromeClient = object : WebChromeClient() {
                             override fun onReceivedTitle(view: WebView?, title: String?) {
                                 if (!title.isNullOrBlank() && !title.contains("YouTube", ignoreCase = true)) {
@@ -836,30 +891,58 @@ fun RealYouTubeChannelFullView(
 
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 isLoading = newProgress < 85
-                                if (newProgress > 60) {
-                                    injectReGainDistractionBlocker(view)
+                                if (newProgress > 50) {
+                                    injectReGainDistractionBlocker(view, allowedTokens)
                                 }
+                            }
+                        }
+
+                        fun handleUrlGuard(view: WebView?, url: String): Boolean {
+                            val decision = com.example.service.YouTubeContentGuard.checkWebUrl(url, allowedChannels)
+                            return when (decision) {
+                                com.example.service.WebViewNavigationAction.BLOCK_SHORTS -> {
+                                    view?.stopLoading()
+                                    onShortsBlocked()
+                                    true
+                                }
+                                com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL -> {
+                                    view?.stopLoading()
+                                    val blockedSlug = url.substringAfter("youtube.com/").substringBefore("/").substringBefore("?")
+                                    onChannelBlocked(blockedSlug)
+                                    true
+                                }
+                                com.example.service.WebViewNavigationAction.ALLOW -> false
                             }
                         }
 
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url?.toString().orEmpty()
-                                // Strict ReGain Shorts Blocker:
-                                if (url.contains("/shorts/", ignoreCase = true) ||
-                                    url.contains("#shorts", ignoreCase = true) ||
-                                    url.contains("&shorts", ignoreCase = true)
-                                ) {
-                                    onShortsBlocked()
-                                    return true // block Shorts!
-                                }
+                                if (handleUrlGuard(view, url)) return true
                                 currentUrl = url
                                 return false
                             }
 
+                            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                super.doUpdateVisitedHistory(view, url, isReload)
+                                val safeUrl = url.orEmpty()
+                                if (handleUrlGuard(view, safeUrl)) {
+                                    if (view?.canGoBack() == true) view.goBack() else view?.loadUrl(initialUrl)
+                                    return
+                                }
+                                currentUrl = safeUrl
+                                canGoBack = view?.canGoBack() == true
+                                injectReGainDistractionBlocker(view, allowedTokens)
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                val safeUrl = url.orEmpty()
+                                if (handleUrlGuard(view, safeUrl)) {
+                                    if (view?.canGoBack() == true) view.goBack() else view?.loadUrl(initialUrl)
+                                    return
+                                }
                                 isLoading = true
-                                currentUrl = url.orEmpty()
+                                currentUrl = safeUrl
                                 canGoBack = view?.canGoBack() == true
                             }
 
@@ -867,7 +950,7 @@ fun RealYouTubeChannelFullView(
                                 isLoading = false
                                 currentUrl = url.orEmpty()
                                 canGoBack = view?.canGoBack() == true
-                                injectReGainDistractionBlocker(view)
+                                injectReGainDistractionBlocker(view, allowedTokens)
                             }
                         }
 
@@ -1057,14 +1140,19 @@ private fun ReGainEmptyChannelsPlaceholder(
     }
 }
 
-private fun injectReGainDistractionBlocker(webView: WebView?) {
+private fun injectReGainDistractionBlocker(
+    webView: WebView?,
+    allowedTokens: List<String> = emptyList()
+) {
     if (webView == null) return
+    val jsonTokens = org.json.JSONArray(allowedTokens).toString()
     val js = """
         (function() {
             var css = `
                 [tab-identifier="FEshorts"],
                 [aria-label*="Shorts"],
                 [title*="Shorts"],
+                a[href*="/shorts/"],
                 ytm-reel-shelf-renderer,
                 ytd-reel-shelf-renderer,
                 ytd-rich-shelf-renderer[is-shorts],
@@ -1084,6 +1172,47 @@ private fun injectReGainDistractionBlocker(webView: WebView?) {
                 style.appendChild(document.createTextNode(css));
                 document.head.appendChild(style);
             }
+
+            var allowed = $jsonTokens;
+            function isAllowedText(txt) {
+                if (!txt || allowed.length === 0) return false;
+                var lower = txt.toLowerCase();
+                var compact = lower.replace(/[^a-z0-9]/g, '');
+                for (var i = 0; i < allowed.length; i++) {
+                    var tok = allowed[i].toLowerCase();
+                    if (tok.length < 2) continue;
+                    if (lower.indexOf(tok) !== -1) return true;
+                    var tokCompact = tok.replace(/[^a-z0-9]/g, '');
+                    if (tokCompact.length >= 3 && compact.indexOf(tokCompact) !== -1) return true;
+                }
+                return false;
+            }
+
+            function inspectCurrentPage() {
+                var href = (window.location.href || '').toLowerCase();
+                if (href.indexOf('/shorts/') !== -1) {
+                    if (window.AndroidFocusBridge) window.AndroidFocusBridge.onShortsDetected();
+                    return;
+                }
+                if (href.indexOf('/watch') !== -1) {
+                    var ownerEl = document.querySelector('ytm-slim-owner-renderer .slim-owner-channel-name, ytm-slim-owner-renderer a[href*="/@"], #owner-name a, ytd-channel-name a');
+                    if (ownerEl) {
+                        var ownerName = (ownerEl.innerText || ownerEl.textContent || '').trim();
+                        var ownerHref = (ownerEl.getAttribute('href') || '').toLowerCase();
+                        if (ownerName && !isAllowedText(ownerName) && !isAllowedText(ownerHref)) {
+                            if (window.AndroidFocusBridge) window.AndroidFocusBridge.onOtherChannelDetected(ownerName);
+                        }
+                    }
+                }
+            }
+
+            if (!window.__focusSenseHooked) {
+                window.__focusSenseHooked = true;
+                window.addEventListener('yt-navigate-finish', function() { setTimeout(inspectCurrentPage, 250); });
+                window.addEventListener('popstate', function() { setTimeout(inspectCurrentPage, 250); });
+                setInterval(inspectCurrentPage, 1200);
+            }
+            inspectCurrentPage();
         })();
     """.trimIndent()
     webView.evaluateJavascript(js, null)

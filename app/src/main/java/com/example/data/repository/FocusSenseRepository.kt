@@ -6,12 +6,17 @@ import com.example.ai.ThreatAnalysisResult
 import com.example.ai.ThreatEvaluationEngine
 import com.example.data.local.FocusSenseDatabase
 import com.example.data.model.ActivityLogEntity
+import com.example.data.model.AllowedYouTubeChannelEntity
 import com.example.data.model.DeviceEntity
 import com.example.data.model.FamilyGroupEntity
 import com.example.data.model.InstalledAppEntity
 import com.example.data.model.LocationPointEntity
 import com.example.data.model.ScheduleRuleEntity
 import com.example.data.model.UserEntity
+import com.example.service.NodeTextData
+import com.example.service.ScraperFilterEngine
+import com.example.service.YouTubeContentGuard
+import com.example.service.YouTubeGuardDecision
 import com.example.util.InstalledAppScanner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +110,11 @@ class FocusSenseRepository(context: Context) {
     // In-Memory App Blocking Cache for 0ms Latency in AccessibilityService
     private val _instantBlockedPackages = MutableStateFlow<Set<String>>(emptySet())
     val instantBlockedPackages: StateFlow<Set<String>> = _instantBlockedPackages.asStateFlow()
+
+    private val _whitelistedYouTubeChannels = MutableStateFlow<List<AllowedYouTubeChannelEntity>>(emptyList())
+    val whitelistedYouTubeChannels: StateFlow<List<AllowedYouTubeChannelEntity>> = _whitelistedYouTubeChannels.asStateFlow()
+
+    private val _activeScheduleRules = MutableStateFlow<List<ScheduleRuleEntity>>(emptyList())
 
     private val _temporaryUnlockedPackages = ConcurrentHashMap<String, Long>()
 
@@ -224,14 +234,28 @@ class FocusSenseRepository(context: Context) {
                 }
             }
 
-            // Initialize in-memory blocked apps cache from DB
+            // Initialize in-memory caches from DB
             try {
                 val blocked = db.installedAppDao().getBlockedPackageNamesSync()
                 _instantBlockedPackages.value = blocked.map { it.lowercase() }.toSet()
+                refreshYouTubeCache()
+                refreshActiveRulesCache()
             } catch (_: Exception) {}
 
             _isSessionReady.value = true
         }
+    }
+
+    private suspend fun refreshYouTubeCache() {
+        try {
+            _whitelistedYouTubeChannels.value = db.youtubeDao().getAllWhitelistedChannelsSync()
+        } catch (_: Exception) {}
+    }
+
+    private suspend fun refreshActiveRulesCache() {
+        try {
+            _activeScheduleRules.value = db.scheduleRuleDao().getAllActiveRulesSync()
+        } catch (_: Exception) {}
     }
 
     suspend fun launchDemoParent() = withContext(Dispatchers.IO) {
@@ -744,68 +768,164 @@ class FocusSenseRepository(context: Context) {
         val rules = (childRules + allActive).distinctBy { it.ruleId }
 
         val now = Calendar.getInstance()
-        val currentHour = now.get(Calendar.HOUR_OF_DAY)
-        val currentMinute = now.get(Calendar.MINUTE)
-        val currentTimeMinutes = currentHour * 60 + currentMinute
-
-        // Day of week check (e.g. Mon, Tue)
-        val dayNames = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-        val currentDayName = dayNames[now.get(Calendar.DAY_OF_WEEK) - 1]
-
         for (rule in rules) {
-            if (!rule.isActive) continue
+            if (!isRuleActiveNow(rule, now)) continue
 
-            // Check days (allows "Daily", "All", "Everyday", empty, or comma-separated days)
-            val daySpec = rule.dayOfWeek.trim()
-            val dayMatches = daySpec.isBlank() ||
-                    daySpec.contains("All", ignoreCase = true) ||
-                    daySpec.contains("Daily", ignoreCase = true) ||
-                    daySpec.contains("Everyday", ignoreCase = true) ||
-                    daySpec.contains(currentDayName, ignoreCase = true)
-
-            if (!dayMatches) continue
-
-            // Parse start and end time
-            val startParts = rule.startTime.split(":")
-            val endParts = rule.endTime.split(":")
-            if (startParts.size != 2 || endParts.size != 2) continue
-
-            val startMinutes = (startParts[0].toIntOrNull() ?: 0) * 60 + (startParts[1].toIntOrNull() ?: 0)
-            val endMinutes = (endParts[0].toIntOrNull() ?: 0) * 60 + (endParts[1].toIntOrNull() ?: 0)
-
-            val isTimeMatch = when {
-                // If explicitly configured for 24/7 (00:00 to 23:59)
-                startMinutes == 0 && endMinutes >= 1439 -> true
-                // Equal non-full-day start and end time means zero duration
-                startMinutes == endMinutes -> false
-                startMinutes < endMinutes -> currentTimeMinutes >= startMinutes && currentTimeMinutes < endMinutes
-                startMinutes > endMinutes -> currentTimeMinutes >= startMinutes || currentTimeMinutes < endMinutes
-                else -> false
+            val packages = rule.restrictedPackages.split(",").map { it.trim().lowercase() }
+            val matchesApp = packages.any { pkgPattern ->
+                // Whitelist rules (`com.google.android.youtube:whitelist...`) allow YouTube to open
+                // while enforcing allowed channels & blocking Shorts inside YouTubeContentGuard
+                if (YouTubeContentGuard.isYouTubeWhitelistToken(pkgPattern)) {
+                    false
+                } else {
+                    pkgPattern == "*" ||
+                        pkgPattern == "all" ||
+                        pkgPattern == lowerPkg ||
+                        (pkgPattern.isNotBlank() && lowerPkg.contains(pkgPattern))
+                }
             }
 
-            if (isTimeMatch) {
-                val packages = rule.restrictedPackages.split(",").map { it.trim().lowercase() }
-                val matchesApp = packages.any { pkgPattern ->
-                    pkgPattern == "*" ||
-                    pkgPattern == "all" ||
-                    pkgPattern == lowerPkg ||
-                    (pkgPattern.isNotBlank() && lowerPkg.contains(pkgPattern))
-                }
-
-                if (matchesApp) {
-                    val displayAppName = rule.ruleName.substringAfter("Parent App Lock: ").takeIf { it.isNotBlank() } ?: packageName
-                    return@withContext ActiveAppBlockInfo(
-                        isBlocked = true,
-                        ruleName = rule.ruleName,
-                        category = rule.category,
-                        endTime = rule.endTime,
-                        restrictedAppName = displayAppName
-                    )
-                }
+            if (matchesApp) {
+                val displayAppName = rule.ruleName.substringAfter("Parent App Lock: ").takeIf { it.isNotBlank() } ?: packageName
+                return@withContext ActiveAppBlockInfo(
+                    isBlocked = true,
+                    ruleName = rule.ruleName,
+                    category = rule.category,
+                    endTime = rule.endTime,
+                    restrictedAppName = displayAppName
+                )
             }
         }
 
         ActiveAppBlockInfo(isBlocked = false)
+    }
+
+    private fun isRuleActiveNow(rule: ScheduleRuleEntity, now: Calendar = Calendar.getInstance()): Boolean {
+        if (!rule.isActive) return false
+
+        val dayNames = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        val currentDayName = dayNames[now.get(Calendar.DAY_OF_WEEK) - 1]
+        val daySpec = rule.dayOfWeek.trim()
+        val dayMatches = daySpec.isBlank() ||
+            daySpec.contains("All", ignoreCase = true) ||
+            daySpec.contains("Daily", ignoreCase = true) ||
+            daySpec.contains("Everyday", ignoreCase = true) ||
+            daySpec.contains(currentDayName, ignoreCase = true)
+
+        if (!dayMatches) return false
+
+        val startParts = rule.startTime.trim().split(":")
+        val endParts = rule.endTime.trim().split(":")
+        if (startParts.size < 2 || endParts.size < 2) return false
+
+        val startMinutes = (startParts[0].toIntOrNull() ?: 0) * 60 + (startParts[1].toIntOrNull() ?: 0)
+        val endMinutes = (endParts[0].toIntOrNull() ?: 0) * 60 + (endParts[1].toIntOrNull() ?: 0)
+        val currentTimeMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+
+        return when {
+            startMinutes == 0 && endMinutes >= 1439 -> true
+            startMinutes == endMinutes -> false
+            startMinutes < endMinutes -> currentTimeMinutes >= startMinutes && currentTimeMinutes < endMinutes
+            startMinutes > endMinutes -> currentTimeMinutes >= startMinutes || currentTimeMinutes < endMinutes
+            else -> false
+        }
+    }
+
+    /**
+     * Evaluates whether native YouTube (`com.google.android.youtube`) or a browser visiting YouTube
+     * is currently showing Shorts or an unapproved channel.
+     */
+    suspend fun checkYouTubeContentRestriction(
+        childId: String,
+        packageName: String,
+        nodes: List<NodeTextData>,
+        extractedUrls: List<String>
+    ): YouTubeGuardDecision {
+        val isNativeYt = YouTubeContentGuard.isYouTubePackage(packageName)
+        val isBrowser = ScraperFilterEngine.isKnownBrowser(packageName)
+        if (!isNativeYt && !isBrowser) {
+            return YouTubeGuardDecision(shouldBlock = false)
+        }
+
+        // Respect Parent temporary 15m unlock override
+        if (isPackageTemporarilyUnlocked(packageName) || isPackageTemporarilyUnlocked("com.google.android.youtube")) {
+            return YouTubeGuardDecision(shouldBlock = false)
+        }
+
+        // Refresh caches lazily if empty
+        if (_whitelistedYouTubeChannels.value.isEmpty()) {
+            refreshYouTubeCache()
+        }
+        if (_activeScheduleRules.value.isEmpty()) {
+            refreshActiveRulesCache()
+        }
+
+        val effectiveChildId = childId.ifBlank { _currentUser.value?.userId ?: "child-default" }
+        val dbAllowed = _whitelistedYouTubeChannels.value.filter {
+            it.isAllowed && (it.childId == effectiveChildId || it.childId == "child-default" || effectiveChildId == "child-default")
+        }
+
+        val now = Calendar.getInstance()
+        val activeYtWhitelistRules = _activeScheduleRules.value.filter { rule ->
+            isRuleActiveNow(rule, now) && rule.restrictedPackages.split(",").any {
+                YouTubeContentGuard.isYouTubeWhitelistToken(it)
+            }
+        }
+
+        // Also include any channels embedded in active parent-configured whitelist rules
+        val ruleEmbeddedChannels = activeYtWhitelistRules
+            .flatMap { YouTubeContentGuard.parseRuleWhitelistChannels(it.restrictedPackages) }
+            .map { hint ->
+                val clean = hint.trim()
+                val slug = clean.removePrefix("@").replace(" ", "").lowercase(Locale.ROOT)
+                AllowedYouTubeChannelEntity(
+                    channelId = "rule_$slug",
+                    childId = effectiveChildId,
+                    channelName = clean.removePrefix("@"),
+                    handle = if (clean.startsWith("@")) clean else "@$slug",
+                    channelUrl = "https://m.youtube.com/@$slug",
+                    isAllowed = true
+                )
+            }
+
+        val effectiveAllowedChannels = (dbAllowed + ruleEmbeddedChannels).distinctBy {
+            it.channelName.lowercase(Locale.ROOT) + "|" + it.handle.lowercase(Locale.ROOT)
+        }
+
+        val enforceWhitelist = effectiveAllowedChannels.isNotEmpty() || activeYtWhitelistRules.isNotEmpty()
+        if (!enforceWhitelist) {
+            return YouTubeGuardDecision(shouldBlock = false)
+        }
+
+        return if (isNativeYt) {
+            YouTubeContentGuard.evaluateNativeYouTube(
+                nodes = nodes,
+                allowedChannels = effectiveAllowedChannels,
+                enforceWhitelist = true
+            )
+        } else {
+            YouTubeContentGuard.evaluateBrowserYouTube(
+                urls = extractedUrls,
+                nodes = nodes,
+                allowedChannels = effectiveAllowedChannels,
+                enforceWhitelist = true
+            )
+        }
+    }
+
+    fun getAllowedYouTubeChannelNamesSummary(childId: String): String {
+        val effectiveChildId = childId.ifBlank { _currentUser.value?.userId ?: "child-default" }
+        val channels = _whitelistedYouTubeChannels.value.filter {
+            it.isAllowed && (it.childId == effectiveChildId || it.childId == "child-default")
+        }
+        val ruleChannels = _activeScheduleRules.value
+            .filter { isRuleActiveNow(it) }
+            .flatMap { YouTubeContentGuard.parseRuleWhitelistChannels(it.restrictedPackages) }
+        val names = (channels.map { it.channelName } + ruleChannels)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        return if (names.isEmpty()) "None configured yet" else names.take(4).joinToString(", ")
     }
 
     // 3. Location Logging
@@ -908,6 +1028,8 @@ class FocusSenseRepository(context: Context) {
     suspend fun addScheduleRule(rule: ScheduleRuleEntity) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().insert(rule)
         val childId = rule.childId.ifBlank { _selectedChildId.value.ifBlank { _currentUser.value?.userId ?: "" } }
+        syncEmbeddedWhitelistChannelsFromRule(rule, childId)
+        refreshActiveRulesCache()
         com.example.data.remote.SupabaseClient.pushScheduleRule(rule, childId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
@@ -918,6 +1040,8 @@ class FocusSenseRepository(context: Context) {
     suspend fun updateScheduleRule(rule: ScheduleRuleEntity) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().update(rule)
         val childId = rule.childId.ifBlank { _selectedChildId.value.ifBlank { _currentUser.value?.userId ?: "" } }
+        syncEmbeddedWhitelistChannelsFromRule(rule, childId)
+        refreshActiveRulesCache()
         com.example.data.remote.SupabaseClient.pushScheduleRule(rule, childId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
@@ -927,6 +1051,7 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun deleteScheduleRule(ruleId: String) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().delete(ruleId)
+        refreshActiveRulesCache()
         com.example.data.remote.SupabaseClient.deleteScheduleRule(ruleId)
         try {
             val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
@@ -936,8 +1061,9 @@ class FocusSenseRepository(context: Context) {
 
     suspend fun toggleRuleActive(ruleId: String, isActive: Boolean) = withContext(Dispatchers.IO) {
         db.scheduleRuleDao().toggleRuleActive(ruleId, isActive)
+        refreshActiveRulesCache()
         com.example.data.remote.SupabaseClient.toggleScheduleRule(ruleId, isActive)
-        val rule = db.scheduleRuleDao().getAllActiveRulesSync().find { it.ruleId == ruleId }
+        val rule = db.scheduleRuleDao().getRuleById(ruleId)
         if (rule != null) {
             try {
                 val api = com.example.data.remote.ApiClient.getService(_serverUrl.value)
@@ -952,6 +1078,9 @@ class FocusSenseRepository(context: Context) {
             val supabaseRules = com.example.data.remote.SupabaseClient.fetchScheduleRules(effectiveChildId)
             if (supabaseRules.isNotEmpty()) {
                 db.scheduleRuleDao().insertAll(supabaseRules)
+                for (r in supabaseRules) {
+                    syncEmbeddedWhitelistChannelsFromRule(r, effectiveChildId)
+                }
             }
         }
         try {
@@ -959,8 +1088,44 @@ class FocusSenseRepository(context: Context) {
             val resp = api.getSchedules(effectiveChildId.ifBlank { "child-default" })
             if (resp.isSuccessful && resp.body() != null) {
                 db.scheduleRuleDao().insertAll(resp.body()!!)
+                for (r in resp.body()!!) {
+                    syncEmbeddedWhitelistChannelsFromRule(r, effectiveChildId)
+                }
             }
         } catch (_: Exception) {}
+        refreshActiveRulesCache()
+    }
+
+    private suspend fun syncEmbeddedWhitelistChannelsFromRule(rule: ScheduleRuleEntity, childId: String) {
+        if (!rule.isActive) return
+        val hints = YouTubeContentGuard.parseRuleWhitelistChannels(rule.restrictedPackages)
+        if (hints.isEmpty()) return
+        val targetChildId = childId.ifBlank { "child-default" }
+        var added = false
+        for (raw in hints) {
+            val cleanName = raw.removePrefix("@").trim()
+            if (cleanName.isBlank()) continue
+            val existing = db.youtubeDao().findChannelByName(targetChildId, cleanName)
+            if (existing == null) {
+                val handleSlug = cleanName.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9_.-]"), "")
+                val entity = AllowedYouTubeChannelEntity(
+                    channelId = "yt_${targetChildId}_$handleSlug",
+                    childId = targetChildId,
+                    channelName = cleanName,
+                    handle = if (raw.startsWith("@")) raw else "@$handleSlug",
+                    description = "Approved study channel from Parent Scheduler (${rule.ruleName})",
+                    category = "Study & Focus",
+                    subscriberCount = "Parent Approved",
+                    channelUrl = "https://m.youtube.com/@$handleSlug",
+                    isAllowed = true
+                )
+                db.youtubeDao().insert(entity)
+                added = true
+            }
+        }
+        if (added) {
+            refreshYouTubeCache()
+        }
     }
 
     suspend fun refreshChildFromCloud(childId: String) = withContext(Dispatchers.IO) {
@@ -1106,27 +1271,36 @@ class FocusSenseRepository(context: Context) {
         } catch (_: Exception) {}
     }
 
+    suspend fun verifyParentPin(pin: String): Boolean = withContext(Dispatchers.IO) {
+        val parent = db.userDao().getUsersByRoleSync("parent").firstOrNull()
+        val expectedPin = parent?.pin?.takeIf { it.isNotBlank() } ?: "1234"
+        pin.trim() == expectedPin
+    }
+
     suspend fun updateParentPin(userId: String, newPin: String) = withContext(Dispatchers.IO) {
         db.userDao().updatePin(userId, newPin)
     }
 
-    fun getAllowedYouTubeChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>> {
+    fun getAllowedYouTubeChannels(childId: String): Flow<List<AllowedYouTubeChannelEntity>> {
         return db.youtubeDao().getAllChannelsForChild(childId)
     }
 
-    fun getWhitelistedYouTubeChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>> {
+    fun getWhitelistedYouTubeChannels(childId: String): Flow<List<AllowedYouTubeChannelEntity>> {
         return db.youtubeDao().getWhitelistedChannels(childId)
     }
 
     suspend fun toggleYouTubeChannelAllowed(channelId: String, isAllowed: Boolean) = withContext(Dispatchers.IO) {
         db.youtubeDao().updateAllowedStatus(channelId, isAllowed)
+        refreshYouTubeCache()
     }
 
-    suspend fun addYouTubeChannel(channel: com.example.data.model.AllowedYouTubeChannelEntity) = withContext(Dispatchers.IO) {
+    suspend fun addYouTubeChannel(channel: AllowedYouTubeChannelEntity) = withContext(Dispatchers.IO) {
         db.youtubeDao().insert(channel)
+        refreshYouTubeCache()
     }
 
     suspend fun removeYouTubeChannel(channelId: String) = withContext(Dispatchers.IO) {
         db.youtubeDao().removeChannel(channelId)
+        refreshYouTubeCache()
     }
 }

@@ -132,4 +132,227 @@ class ExampleRobolectricTest {
     // For this environment, I'll trust the code logic verified by compilation and structure.
     assertTrue(true) 
   }
+
+  @Test
+  fun `youtube whitelist schedule does not block youtube app launch and parses HHmmss`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.FocusSenseRepository(context)
+
+    val rule = com.example.data.model.ScheduleRuleEntity(
+      ruleId = "test-yt-study-rule",
+      childId = "child-default",
+      ruleName = "YouTube Study Mode",
+      category = "Study",
+      startTime = "00:00:00",
+      endTime = "23:59:59",
+      dayOfWeek = "All Days",
+      restrictedPackages = "com.google.android.youtube:whitelist:@takeUforward|Khan Academy",
+      isActive = true
+    )
+    repository.addScheduleRule(rule)
+
+    // Opening the native YouTube app itself must be ALLOWED (channel/Shorts filtering happens inside)
+    val appCheck = repository.checkAppRestriction("child-default", "com.google.android.youtube")
+    assertFalse("YouTube study whitelist must NOT whole-app block YouTube launch", appCheck.isBlocked)
+  }
+
+  @Test
+  fun `native youtube guard does not false trigger on bottom nav shorts button`() {
+    val allowed = listOf(
+      com.example.data.model.AllowedYouTubeChannelEntity(
+        channelId = "striver",
+        childId = "child-default",
+        channelName = "take U forward",
+        handle = "@takeUforward",
+        channelUrl = "https://m.youtube.com/@takeUforward",
+        isAllowed = true
+      )
+    )
+    val homeNodes = listOf(
+      com.example.service.NodeTextData(text = "Home", viewId = "com.google.android.youtube:id/pivot_bar"),
+      com.example.service.NodeTextData(text = "Shorts", viewId = "com.google.android.youtube:id/shorts_pivot_button"),
+      com.example.service.NodeTextData(text = "Subscriptions", viewId = "com.google.android.youtube:id/pivot_bar")
+    )
+
+    val decision = com.example.service.YouTubeContentGuard.evaluateNativeYouTube(
+      nodes = homeNodes,
+      allowedChannels = allowed,
+      enforceWhitelist = true
+    )
+    assertFalse("Home bottom nav Shorts icon must not trigger Shorts block", decision.shouldBlock)
+  }
+
+  @Test
+  fun `native youtube guard blocks active shorts player`() {
+    val allowed = listOf(
+      com.example.data.model.AllowedYouTubeChannelEntity(
+        channelId = "striver",
+        childId = "child-default",
+        channelName = "take U forward",
+        handle = "@takeUforward",
+        channelUrl = "https://m.youtube.com/@takeUforward",
+        isAllowed = true
+      )
+    )
+    val shortsNodes = listOf(
+      com.example.service.NodeTextData(text = "", viewId = "com.google.android.youtube:id/reel_recycler"),
+      com.example.service.NodeTextData(text = "", viewId = "com.google.android.youtube:id/reel_progress_bar"),
+      com.example.service.NodeTextData(text = "take U forward", viewId = "com.google.android.youtube:id/reel_channel_bar")
+    )
+
+    val decision = com.example.service.YouTubeContentGuard.evaluateNativeYouTube(
+      nodes = shortsNodes,
+      allowedChannels = allowed,
+      enforceWhitelist = true
+    )
+    assertTrue("Active Shorts player must be blocked even for allowed creators", decision.shouldBlock)
+    assertEquals(com.example.service.YouTubeBlockReason.SHORTS_BLOCKED, decision.reason)
+  }
+
+  @Test
+  fun `native youtube guard allows whitelisted channel and blocks unapproved channel ignoring up next`() {
+    val allowed = listOf(
+      com.example.data.model.AllowedYouTubeChannelEntity(
+        channelId = "striver",
+        childId = "child-default",
+        channelName = "take U forward",
+        handle = "@takeUforward",
+        channelUrl = "https://m.youtube.com/@takeUforward",
+        isAllowed = true
+      )
+    )
+
+    val allowedWatchNodes = listOf(
+      com.example.service.NodeTextData(text = "", viewId = "com.google.android.youtube:id/watch_player"),
+      com.example.service.NodeTextData(text = "Binary Search Explained", viewId = "com.google.android.youtube:id/title"),
+      com.example.service.NodeTextData(text = "take U forward", viewId = "com.google.android.youtube:id/channel_name"),
+      com.example.service.NodeTextData(text = "Subscribe", viewId = "com.google.android.youtube:id/subscribe_button")
+    )
+    val allowDecision = com.example.service.YouTubeContentGuard.evaluateNativeYouTube(
+      nodes = allowedWatchNodes,
+      allowedChannels = allowed,
+      enforceWhitelist = true
+    )
+    assertFalse("Whitelisted study channel must be allowed", allowDecision.shouldBlock)
+
+    // Unapproved creator playing even when Up Next mentions an allowed creator below
+    val unapprovedWatchNodes = listOf(
+      com.example.service.NodeTextData(text = "", viewId = "com.google.android.youtube:id/watch_player"),
+      com.example.service.NodeTextData(text = "Crazy Prank Challenge!", viewId = "com.google.android.youtube:id/title"),
+      com.example.service.NodeTextData(text = "MrBeast", viewId = "com.google.android.youtube:id/channel_name"),
+      com.example.service.NodeTextData(text = "Subscribe"),
+      com.example.service.NodeTextData(text = "a"),
+      com.example.service.NodeTextData(text = "b"),
+      com.example.service.NodeTextData(text = "c"),
+      com.example.service.NodeTextData(text = "Up next"),
+      com.example.service.NodeTextData(text = "take U forward", viewId = "com.google.android.youtube:id/channel_name")
+    )
+    val blockDecision = com.example.service.YouTubeContentGuard.evaluateNativeYouTube(
+      nodes = unapprovedWatchNodes,
+      allowedChannels = allowed,
+      enforceWhitelist = true
+    )
+    assertTrue("Unapproved channel must be blocked even if whitelisted channel appears below Up next", blockDecision.shouldBlock)
+    assertEquals(com.example.service.YouTubeBlockReason.UNAPPROVED_CHANNEL, blockDecision.reason)
+  }
+
+  @Test
+  fun `web url guard blocks shorts and unapproved channels while allowing study channels`() {
+    val allowed = listOf(
+      com.example.data.model.AllowedYouTubeChannelEntity(
+        channelId = "striver",
+        childId = "child-default",
+        channelName = "take U forward",
+        handle = "@takeUforward",
+        channelUrl = "https://m.youtube.com/@takeUforward",
+        isAllowed = true
+      )
+    )
+
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_SHORTS,
+      com.example.service.YouTubeContentGuard.checkWebUrl("https://m.youtube.com/shorts/abc123", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkWebUrl("https://m.youtube.com/@mrbeast", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.ALLOW,
+      com.example.service.YouTubeContentGuard.checkWebUrl("https://m.youtube.com/@takeUforward/playlists", allowed)
+    )
+  }
+
+  @Test
+  fun `repository checks native youtube content restriction and parent pin end to end`() = kotlinx.coroutines.runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val repository = com.example.data.repository.FocusSenseRepository(context)
+
+    val rule = com.example.data.model.ScheduleRuleEntity(
+      ruleId = "yt-e2e-rule",
+      childId = "child-e2e",
+      ruleName = "Study Only YT",
+      category = "Study",
+      startTime = "00:00:00",
+      endTime = "23:59:59",
+      dayOfWeek = "All Days",
+      restrictedPackages = "com.google.android.youtube:whitelist:@KhanAcademy",
+      isActive = true
+    )
+    repository.addScheduleRule(rule)
+
+    val blockedDecision = repository.checkYouTubeContentRestriction(
+      childId = "child-e2e",
+      packageName = "com.google.android.youtube",
+      nodes = listOf(
+        com.example.service.NodeTextData("", "com.google.android.youtube:id/watch_player"),
+        com.example.service.NodeTextData("Gaming Stream", "com.google.android.youtube:id/title"),
+        com.example.service.NodeTextData("RandomGamer", "com.google.android.youtube:id/channel_name"),
+        com.example.service.NodeTextData("Subscribe")
+      ),
+      extractedUrls = emptyList()
+    )
+    assertTrue("Unapproved channel should be blocked by repository check", blockedDecision.shouldBlock)
+    assertEquals(com.example.service.YouTubeBlockReason.UNAPPROVED_CHANNEL, blockedDecision.reason)
+
+    val allowedDecision = repository.checkYouTubeContentRestriction(
+      childId = "child-e2e",
+      packageName = "com.google.android.youtube",
+      nodes = listOf(
+        com.example.service.NodeTextData("", "com.google.android.youtube:id/watch_player"),
+        com.example.service.NodeTextData("Calculus Basics", "com.google.android.youtube:id/title"),
+        com.example.service.NodeTextData("Khan Academy", "com.google.android.youtube:id/channel_name"),
+        com.example.service.NodeTextData("Subscribed")
+      ),
+      extractedUrls = emptyList()
+    )
+    assertFalse("Channel embedded in parent whitelist rule must be allowed", allowedDecision.shouldBlock)
+    assertTrue("Default PIN fallback should verify", repository.verifyParentPin("1234"))
+  }
+
+  @Test
+  fun `vanced packages and chrome schemeless url bar are handled by guard`() {
+    assertTrue(com.example.service.YouTubeContentGuard.isYouTubePackage("com.vanced.android.youtube"))
+    assertTrue(com.example.service.YouTubeContentGuard.isYouTubePackage("app.revanced.android.youtube"))
+
+    val chromeResult = com.example.service.ScraperFilterEngine.filterAndClassifyWindow(
+      packageName = "com.android.chrome",
+      ownPackage = "com.example",
+      className = "org.chromium.chrome.browser.ChromeTabbedActivity",
+      nodes = listOf(
+        com.example.service.NodeTextData(text = "m.youtube.com/shorts/xyz987", viewId = "com.android.chrome:id/url_bar"),
+        com.example.service.NodeTextData(text = "Some Short Video Title Below")
+      )
+    )
+    assertTrue("Chrome url_bar without https should still be extracted", chromeResult.extractedUrls.contains("m.youtube.com/shorts/xyz987"))
+
+    val decision = com.example.service.YouTubeContentGuard.evaluateBrowserYouTube(
+      urls = chromeResult.extractedUrls,
+      nodes = emptyList(),
+      allowedChannels = emptyList(),
+      enforceWhitelist = true
+    )
+    assertTrue("Chrome Shorts URL without https must be blocked", decision.shouldBlock)
+    assertEquals(com.example.service.YouTubeBlockReason.SHORTS_BLOCKED, decision.reason)
+  }
 }

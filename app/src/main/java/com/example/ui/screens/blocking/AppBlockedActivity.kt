@@ -84,34 +84,49 @@ class AppBlockedActivity : ComponentActivity() {
         const val EXTRA_OPEN_ALLOWED_CHANNELS = "extra_open_allowed_channels"
     }
 
+    private var blockedPkgState by mutableStateOf("")
+    private var appNameState by mutableStateOf("This Application")
+    private var ruleNameState by mutableStateOf("Curfew Schedule")
+    private var categoryState by mutableStateOf("Restricted Content")
+    private var endTimeState by mutableStateOf("End of Period")
+
+    private fun readExtrasFromIntent(incomingIntent: Intent?) {
+        blockedPkgState = incomingIntent?.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
+        appNameState = incomingIntent?.getStringExtra(EXTRA_APP_NAME) ?: "This Application"
+        ruleNameState = incomingIntent?.getStringExtra(EXTRA_RULE_NAME) ?: "Curfew Schedule"
+        categoryState = incomingIntent?.getStringExtra(EXTRA_CATEGORY) ?: "Restricted Content"
+        endTimeState = incomingIntent?.getStringExtra(EXTRA_END_TIME) ?: "End of Period"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        val blockedPkg = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: ""
-        val appName = intent.getStringExtra(EXTRA_APP_NAME) ?: "This Application"
-        val ruleName = intent.getStringExtra(EXTRA_RULE_NAME) ?: "Curfew Schedule"
-        val category = intent.getStringExtra(EXTRA_CATEGORY) ?: "Restricted Content"
-        val endTime = intent.getStringExtra(EXTRA_END_TIME) ?: "End of Period"
+        readExtrasFromIntent(intent)
 
         setContent {
             MyApplicationTheme {
                 AppBlockedScreen(
-                    appName = appName,
-                    packageName = blockedPkg,
-                    ruleName = ruleName,
-                    category = category,
-                    endTime = endTime,
+                    appName = appNameState,
+                    packageName = blockedPkgState,
+                    ruleName = ruleNameState,
+                    category = categoryState,
+                    endTime = endTimeState,
                     onGoHome = { navigateHome() },
                     onSeeAllowedChannels = { openAllowedChannels() },
                     onCallHelpline = { callCrisisHelpline() },
                     onSmsHelpline = { smsCrisisHelpline() },
                     onParentUnlock = { pin ->
-                        verifyAndUnlock(blockedPkg, pin)
+                        verifyAndUnlock(blockedPkgState, pin)
                     }
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readExtrasFromIntent(intent)
     }
 
     private fun openAllowedChannels() {
@@ -152,8 +167,10 @@ class AppBlockedActivity : ComponentActivity() {
 
     private fun verifyAndUnlock(packageName: String, pin: String): Boolean {
         val app = application as? FocusSenseApplication ?: return false
-        val expectedPin = "1234" // Default parent override PIN
-        if (pin.trim() == expectedPin) {
+        val verified = kotlinx.coroutines.runBlocking {
+            app.repository.verifyParentPin(pin)
+        }
+        if (verified) {
             app.repository.temporarilyUnlockApp(packageName, 15)
             finish()
             return true
@@ -188,6 +205,8 @@ fun AppBlockedScreen(
     val isAdult = catUpper.contains("ADULT") || catUpper.contains("EXPLICIT") || catUpper.contains("PORN")
     val isScam = catUpper.contains("SCAM") || catUpper.contains("PHISHING")
     val isViolence = catUpper.contains("VIOLENCE") || catUpper.contains("WEAPONS")
+    val isYouTubeShorts = catUpper.contains("SHORTS")
+    val isYouTubeChannelBlocked = catUpper.contains("UNAPPROVED YOUTUBE") || catUpper.contains("YOUTUBE CHANNEL")
 
     val displayTitle = when {
         isSelfHarmCrisis -> "SELF-HARM & CRISIS INTERVENTION"
@@ -196,6 +215,8 @@ fun AppBlockedScreen(
         isAdult -> "EXPLICIT & ADULT CONTENT RESTRICTION"
         isScam -> "SCAM & PHISHING PROTECTION"
         isViolence -> "VIOLENCE & WEAPONS RESTRICTION"
+        isYouTubeShorts -> "YOUTUBE SHORTS BLOCKED"
+        isYouTubeChannelBlocked -> "CHANNEL NOT IN STUDY LIST"
         else -> "CONTENT ACCESS RESTRICTED"
     }
 
@@ -206,6 +227,8 @@ fun AppBlockedScreen(
         isAdult -> "FocusSense paused $appName because explicit, adult, or age-restricted material was detected."
         isScam -> "FocusSense paused $appName because potential scam, phishing, or financial fraud was detected."
         isViolence -> "FocusSense paused $appName because physical violence or weapons language was detected."
+        isYouTubeShorts -> "YouTube Shorts are blocked while Study Channel Whitelist is active. Only full videos on approved channels are allowed."
+        isYouTubeChannelBlocked -> "This YouTube channel is not on your allowed study list. Open your approved study channels below."
         else -> "$appName is currently paused by FocusSense safety controls."
     }
 
@@ -216,6 +239,7 @@ fun AppBlockedScreen(
         isAdult -> Icons.Default.Block
         isScam -> Icons.Default.Security
         isViolence -> Icons.Default.Warning
+        isYouTubeShorts || isYouTubeChannelBlocked -> Icons.Default.VideoLibrary
         else -> Icons.Default.Block
     }
 
@@ -226,6 +250,7 @@ fun AppBlockedScreen(
         isAdult -> Color(0xFF7B1FA2)
         isScam -> Color(0xFFD84315)
         isViolence -> Color(0xFFB71C1C)
+        isYouTubeShorts || isYouTubeChannelBlocked -> IndigoPrimary
         else -> CoralDanger
     }
 
@@ -236,6 +261,7 @@ fun AppBlockedScreen(
         isAdult -> Color(0xFFF3E5F5)
         isScam -> Color(0xFFFFF3E0)
         isViolence -> Color(0xFFFFEBEE)
+        isYouTubeShorts || isYouTubeChannelBlocked -> Color(0xFFE0E7FF)
         else -> CoralDangerBg
     }
 
@@ -583,17 +609,25 @@ fun AppBlockedScreen(
                         if (endTime.isNotBlank() && endTime != "End of Period") {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Restricted Until: $endTime",
+                                text = if (endTime.startsWith("Allowed:", ignoreCase = true)) {
+                                    endTime
+                                } else {
+                                    "Restricted Until: $endTime"
+                                },
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = CoralDanger
+                                color = if (endTime.startsWith("Allowed:", ignoreCase = true)) EmeraldSafe else CoralDanger
                             )
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "Take a break, focus on your studies, or spend quality time with family.",
+                            text = if (isYouTubeShorts || isYouTubeChannelBlocked) {
+                                "Tap 'See Your Allowed Channels' below to jump straight to your approved educational channels without distractions."
+                            } else {
+                                "Take a break, focus on your studies, or spend quality time with family."
+                            },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 16.sp

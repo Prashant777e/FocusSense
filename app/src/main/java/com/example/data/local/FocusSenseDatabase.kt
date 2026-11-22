@@ -17,13 +17,25 @@ import com.example.data.model.UserEntity
 
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(db: SupportSQLiteDatabase) {
-        // Safe migration from v5 to v6: ensure syncStatus and remove unneeded columns gracefully
-        try {
-            db.execSQL("ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS syncStatus TEXT NOT NULL DEFAULT 'SYNCED'")
-        } catch (e: Exception) {}
-        try {
-            db.execSQL("ALTER TABLE location_history ADD COLUMN IF NOT EXISTS syncStatus TEXT NOT NULL DEFAULT 'SYNCED'")
-        } catch (e: Exception) {}
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `allowed_youtube_channels` (
+                `channelId` TEXT NOT NULL,
+                `childId` TEXT NOT NULL,
+                `channelName` TEXT NOT NULL,
+                `handle` TEXT NOT NULL,
+                `description` TEXT NOT NULL,
+                `category` TEXT NOT NULL,
+                `subscriberCount` TEXT NOT NULL,
+                `videoCount` TEXT NOT NULL,
+                `avatarUrl` TEXT NOT NULL,
+                `channelUrl` TEXT NOT NULL,
+                `isAllowed` INTEGER NOT NULL,
+                `allowedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`channelId`)
+            )
+            """.trimIndent()
+        )
     }
 }
 

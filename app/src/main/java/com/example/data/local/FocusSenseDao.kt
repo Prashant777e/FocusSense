@@ -144,6 +144,9 @@ interface ScheduleRuleDao {
     @Query("SELECT * FROM schedule_rules WHERE isActive = 1")
     suspend fun getAllActiveRulesSync(): List<ScheduleRuleEntity>
 
+    @Query("SELECT * FROM schedule_rules WHERE ruleId = :ruleId LIMIT 1")
+    suspend fun getRuleById(ruleId: String): ScheduleRuleEntity?
+
     @Query("UPDATE schedule_rules SET isActive = :isActive WHERE ruleId = :ruleId")
     suspend fun toggleRuleActive(ruleId: String, isActive: Boolean)
 }
@@ -221,6 +224,12 @@ interface YouTubeDao {
 
     @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND isAllowed = 1 ORDER BY allowedAt DESC")
     fun getWhitelistedChannels(childId: String): Flow<List<com.example.data.model.AllowedYouTubeChannelEntity>>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND isAllowed = 1 ORDER BY allowedAt DESC")
+    suspend fun getWhitelistedChannelsSync(childId: String): List<com.example.data.model.AllowedYouTubeChannelEntity>
+
+    @Query("SELECT * FROM allowed_youtube_channels WHERE isAllowed = 1 ORDER BY allowedAt DESC")
+    suspend fun getAllWhitelistedChannelsSync(): List<com.example.data.model.AllowedYouTubeChannelEntity>
 
     @Query("SELECT * FROM allowed_youtube_channels WHERE childId = :childId AND channelName = :name LIMIT 1")
     suspend fun findChannelByName(childId: String, name: String): com.example.data.model.AllowedYouTubeChannelEntity?

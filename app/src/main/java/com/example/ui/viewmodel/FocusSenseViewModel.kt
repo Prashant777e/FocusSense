@@ -111,13 +111,28 @@ class FocusSenseViewModel(
         .flatMapLatest { childId -> repository.getLocationHistoryForChild(childId) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private fun effectiveChildIdForYouTube(): String {
+        val user = repository.currentUser.value
+        return if (user != null && user.role.equals("child", ignoreCase = true) && user.userId.isNotBlank()) {
+            user.userId
+        } else {
+            selectedChildId.value.ifBlank { "child-default" }
+        }
+    }
+
     // Educational YouTube Channels Whitelist
     val allowedYouTubeChannels: StateFlow<List<com.example.data.model.AllowedYouTubeChannelEntity>> = selectedChildId
-        .flatMapLatest { childId -> repository.getAllowedYouTubeChannels(childId.ifBlank { "child-default" }) }
+        .flatMapLatest { childId ->
+            val effective = childId.ifBlank { repository.currentUser.value?.userId ?: "child-default" }
+            repository.getAllowedYouTubeChannels(effective)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val whitelistedYouTubeChannels: StateFlow<List<com.example.data.model.AllowedYouTubeChannelEntity>> = selectedChildId
-        .flatMapLatest { childId -> repository.getWhitelistedYouTubeChannels(childId.ifBlank { "child-default" }) }
+        .flatMapLatest { childId ->
+            val effective = childId.ifBlank { repository.currentUser.value?.userId ?: "child-default" }
+            repository.getWhitelistedYouTubeChannels(effective)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun toggleYouTubeChannelAllowed(channelId: String, isAllowed: Boolean) {
@@ -156,7 +171,7 @@ class FocusSenseViewModel(
 
     fun addAllowedChannel(result: com.example.data.remote.YouTubeChannelSearchResult) {
         viewModelScope.launch {
-            val childId = selectedChildId.value.ifBlank { "child-default" }
+            val childId = effectiveChildIdForYouTube()
             val newChannel = com.example.data.model.AllowedYouTubeChannelEntity(
                 channelId = result.channelId.ifBlank { java.util.UUID.randomUUID().toString() },
                 childId = childId,
@@ -175,7 +190,7 @@ class FocusSenseViewModel(
 
     fun addCustomYouTubeChannel(channelName: String, category: String = "Study & Focus", channelUrl: String = "") {
         viewModelScope.launch {
-            val childId = selectedChildId.value.ifBlank { "child-default" }
+            val childId = effectiveChildIdForYouTube()
             val cleanName = channelName.trim()
             val handleClean = cleanName.lowercase().replace(" ", "").replace("@", "")
             val finalUrl = if (channelUrl.isNotBlank()) channelUrl else "https://m.youtube.com/@$handleClean"
