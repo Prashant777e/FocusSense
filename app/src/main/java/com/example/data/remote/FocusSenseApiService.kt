@@ -214,7 +214,11 @@ object ApiClient {
     private var currentBaseUrl: String = "https://ais-dev-oopvudz6wyelc5jkmrnerc-562689220446.asia-east1.run.app"
 
     private val logging = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+        level = if (com.example.BuildConfig.DEBUG) {
+            HttpLoggingInterceptor.Level.BODY
+        } else {
+            HttpLoggingInterceptor.Level.NONE
+        }
     }
 
     private val moshi = Moshi.Builder()

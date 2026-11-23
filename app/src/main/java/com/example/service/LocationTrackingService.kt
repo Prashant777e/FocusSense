@@ -91,11 +91,20 @@ class LocationTrackingService : Service() {
             this,
             android.Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
         val app = application as? FocusSenseApplication
 
-        if (hasFine) {
-            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 300000L)
+        if (hasFine || hasCoarse) {
+            val priority = if (hasFine) {
+                Priority.PRIORITY_BALANCED_POWER_ACCURACY
+            } else {
+                Priority.PRIORITY_LOW_POWER
+            }
+            val locationRequest = LocationRequest.Builder(priority, 300000L)
                 .setMinUpdateIntervalMillis(300000L)
                 .build()
 
@@ -120,35 +129,10 @@ class LocationTrackingService : Service() {
                 mainLooper
             )
         } else {
-            // Emulate periodic safe waypoint updates every 5 minutes if physical hardware location is not granted
-            startSimulationWaypointLoop(childId)
-        }
-    }
-
-    private fun startSimulationWaypointLoop(childId: String) {
-        val waypoints = listOf(
-            Triple(37.7749, -122.4194, "Oakwood Middle School"),
-            Triple(37.7793, -122.4168, "Civic Center Library"),
-            Triple(37.7690, -122.4467, "Home (Safe Haven)"),
-            Triple(37.7596, -122.4269, "Central Park Field")
-        )
-        var index = 0
-
-        simulationJob?.cancel()
-        simulationJob = scope.launch {
-            val app = application as? FocusSenseApplication
-            while (isActive) {
-                val pt = waypoints[index % waypoints.size]
-                app?.repository?.recordLocation(
-                    childId = childId,
-                    lat = pt.first,
-                    lng = pt.second,
-                    accuracy = 4.5f,
-                    locationName = pt.third
-                )
-                index++
-                delay(300000L)
-            }
+            Log.w("LocationTracking", "Hardware location permission missing; stopping beacon cleanly without fake waypoints.")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            _isTrackingActive.value = false
+            stopSelf()
         }
     }
 

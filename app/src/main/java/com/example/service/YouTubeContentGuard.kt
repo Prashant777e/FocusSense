@@ -319,17 +319,22 @@ object YouTubeContentGuard {
         val activeAllowed = allowedChannels.filter { it.isAllowed }
         val allowedTokens = activeAllowed.flatMap { extractChannelTokens(it) }.toSet()
 
-        // 2. Check explicit channel URL (e.g. m.youtube.com/@mrbeast or youtube.com/c/foo)
+        // 2. Check explicit channel URLs, feeds, and unapproved search URLs (e.g. m.youtube.com/@mrbeast or m.youtube.com/results?search_query=gta)
         for (url in youtubeUrls) {
-            val decision = checkWebUrlAgainstAllowedTokens(url, allowedTokens)
+            val decision = checkWebUrlAgainstAllowedTokens(url, allowedTokens, strictStudyWebView = false)
             if (decision == WebViewNavigationAction.BLOCK_OTHER_CHANNEL) {
-                val handle = HANDLE_REGEX.find(url)?.value ?: url.substringAfter("youtube.com/").substringBefore("/")
+                val searchQuery = extractSearchQuery(url)
+                val label = when {
+                    searchQuery.isNotBlank() -> "Search: $searchQuery"
+                    else -> HANDLE_REGEX.find(url)?.value
+                        ?: url.substringAfter("youtube.com/").substringBefore("/").substringBefore("?")
+                }
                 return YouTubeGuardDecision(
                     shouldBlock = true,
                     reason = YouTubeBlockReason.UNAPPROVED_CHANNEL,
                     title = "Channel Not Allowed",
-                    detail = "'$handle' is not in your allowed study channels.",
-                    detectedChannel = handle
+                    detail = "'$label' is not in your allowed study channels.",
+                    detectedChannel = label
                 )
             }
         }
@@ -347,8 +352,24 @@ object YouTubeContentGuard {
     }
 
     /**
-     * Checks URLs loaded inside FocusSense's in-app WebView (`RealYouTubeChannelFullView`)
-     * or browser URL bar against Shorts and allowed channel tokens.
+     * Strict guard for FocusSense's in-app Study Player WebView (`RealYouTubeChannelFullView`).
+     * Allows only whitelisted channel pages, playlists, `/watch` video pages (additionally verified by DOM/JS),
+     * and YouTube auth/static endpoints. Blocks all in-player `/results` search, Home, feeds, gaming, Shorts,
+     * unapproved channels, and external websites.
+     */
+    fun checkStudyWebViewUrl(
+        url: String,
+        allowedChannels: List<AllowedYouTubeChannelEntity>
+    ): WebViewNavigationAction {
+        val allowedTokens = allowedChannels
+            .filter { it.isAllowed }
+            .flatMap { extractChannelTokens(it) }
+            .toSet()
+        return checkWebUrlAgainstAllowedTokens(url, allowedTokens, strictStudyWebView = true)
+    }
+
+    /**
+     * Checks URLs loaded inside browser URL bars or WebViews against Shorts and allowed channel tokens.
      */
     fun checkWebUrl(
         url: String,
@@ -358,15 +379,31 @@ object YouTubeContentGuard {
             .filter { it.isAllowed }
             .flatMap { extractChannelTokens(it) }
             .toSet()
-        return checkWebUrlAgainstAllowedTokens(url, allowedTokens)
+        return checkWebUrlAgainstAllowedTokens(url, allowedTokens, strictStudyWebView = false)
+    }
+
+    private fun extractSearchQuery(url: String): String {
+        val queryPart = url.substringAfter("?", "")
+        if (queryPart.isBlank()) return ""
+        val raw = queryPart.split("&")
+            .firstOrNull { it.startsWith("search_query=", ignoreCase = true) || it.startsWith("q=", ignoreCase = true) }
+            ?.substringAfter("=")
+            ?: return ""
+        return try {
+            java.net.URLDecoder.decode(raw, "UTF-8").trim()
+        } catch (_: Exception) {
+            raw.replace("+", " ").trim()
+        }
     }
 
     private fun checkWebUrlAgainstAllowedTokens(
         url: String,
-        allowedTokens: Set<String>
+        allowedTokens: Set<String>,
+        strictStudyWebView: Boolean
     ): WebViewNavigationAction {
-        val lower = url.trim().lowercase(Locale.ROOT)
-        if (lower.isBlank()) return WebViewNavigationAction.ALLOW
+        val trimmed = url.trim()
+        val lower = trimmed.lowercase(Locale.ROOT)
+        if (lower.isBlank() || lower == "about:blank") return WebViewNavigationAction.ALLOW
 
         // 1. Block all Shorts URLs unconditionally
         if (lower.contains("/shorts/") ||
@@ -379,46 +416,122 @@ object YouTubeContentGuard {
             return WebViewNavigationAction.BLOCK_SHORTS
         }
 
-        // Only evaluate YouTube domains
-        if (!lower.contains("youtube.com") && !lower.contains("youtu.be")) {
-            return WebViewNavigationAction.ALLOW
+        // Block external app intents inside Study WebView
+        if (strictStudyWebView && !lower.startsWith("http://") && !lower.startsWith("https://")) {
+            return WebViewNavigationAction.BLOCK_OTHER_CHANNEL
         }
 
-        // 2. Check channel URL path patterns: /@handle, /channel/UC..., /c/name, /user/name
+        val host = lower.substringAfter("://", lower)
+            .substringBefore("/")
+            .substringBefore("?")
+            .substringBefore("#")
+
+        // In strict Study Player WebView, permit only YouTube and Google/YouTube auth/consent/media support hosts
+        if (!host.contains("youtube.com") && !host.contains("youtu.be")) {
+            if (!strictStudyWebView) return WebViewNavigationAction.ALLOW
+            val isSupportHost = host == "accounts.google.com" ||
+                host == "consent.google.com" ||
+                host == "myaccount.google.com" ||
+                host.endsWith(".googlevideo.com") ||
+                host.endsWith(".ytimg.com") ||
+                host.endsWith(".ggpht.com") ||
+                host.endsWith(".gstatic.com")
+            return if (isSupportHost) WebViewNavigationAction.ALLOW else WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+        }
+
+        // Block dedicated gaming / music subdomains
+        if (host.startsWith("gaming.youtube") || host.startsWith("music.youtube")) {
+            return WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+        }
+
+        // 2. Parse YouTube URL path
         val path = lower.substringAfter("youtube.com/", "")
             .substringBefore("?")
             .substringBefore("#")
             .trim('/')
 
-        if (path.isNotBlank()) {
-            val channelSlug = when {
-                path.startsWith("@") -> path.substringBefore("/")
-                path.startsWith("channel/") -> path.substringAfter("channel/").substringBefore("/")
-                path.startsWith("c/") -> path.substringAfter("c/").substringBefore("/")
-                path.startsWith("user/") -> path.substringAfter("user/").substringBefore("/")
-                else -> null
-            }
+        // Allow internal API, static assets, consent, and auth endpoints
+        val isInternalOrAuthPath = path.startsWith("youtubei/") ||
+            path.startsWith("s/") ||
+            path.startsWith("api/") ||
+            path == "sw.js" ||
+            path == "gen_204" ||
+            path == "generate_204" ||
+            path == "error_204" ||
+            path == "iframe_api" ||
+            path.startsWith("signin") ||
+            path.startsWith("logout") ||
+            path.startsWith("account") ||
+            host.startsWith("consent.youtube") ||
+            host.startsWith("accounts.youtube")
+        if (isInternalOrAuthPath) {
+            return WebViewNavigationAction.ALLOW
+        }
 
-            if (!channelSlug.isNullOrBlank()) {
-                val slugClean = channelSlug.removePrefix("@").replace(Regex("[^a-z0-9]"), "")
-                val matches = allowedTokens.any { token ->
-                    val tokenClean = token.removePrefix("@").replace(Regex("[^a-z0-9]"), "")
-                    token == channelSlug ||
-                        token == channelSlug.removePrefix("@") ||
-                        (slugClean.length >= 3 && tokenClean == slugClean)
-                }
-                if (!matches) {
-                    return WebViewNavigationAction.BLOCK_OTHER_CHANNEL
-                }
+        // In strict Study Player WebView, root homepage (m.youtube.com/ or youtube.com/) is blocked
+        if (path.isBlank()) {
+            return if (strictStudyWebView && !host.contains("youtu.be")) {
+                WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+            } else {
+                WebViewNavigationAction.ALLOW
             }
+        }
 
-            // Block trending / gaming / feed explore tabs
-            if (path.startsWith("feed/trending") ||
-                path.startsWith("feed/explore") ||
-                path.startsWith("gaming")
-            ) {
+        // 3. Block search URLs (/results?search_query=...)
+        if (path == "results" || path.startsWith("results/")) {
+            if (strictStudyWebView) {
                 return WebViewNavigationAction.BLOCK_OTHER_CHANNEL
             }
+            val query = extractSearchQuery(trimmed)
+            return if (query.isNotBlank() && matchesAllowedChannel(query, allowedTokens)) {
+                WebViewNavigationAction.ALLOW
+            } else {
+                WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+            }
+        }
+
+        // 4. Check channel URL path patterns: /@handle, /channel/UC..., /c/name, /user/name
+        val channelSlug = when {
+            path.startsWith("@") -> path.substringBefore("/")
+            path.startsWith("channel/") -> path.substringAfter("channel/").substringBefore("/")
+            path.startsWith("c/") -> path.substringAfter("c/").substringBefore("/")
+            path.startsWith("user/") -> path.substringAfter("user/").substringBefore("/")
+            else -> null
+        }
+
+        if (!channelSlug.isNullOrBlank()) {
+            val slugClean = channelSlug.removePrefix("@").replace(Regex("[^a-z0-9]"), "")
+            val matches = allowedTokens.any { token ->
+                val tokenClean = token.removePrefix("@").replace(Regex("[^a-z0-9]"), "")
+                token == channelSlug ||
+                    token == channelSlug.removePrefix("@") ||
+                    (slugClean.length >= 3 && tokenClean == slugClean)
+            }
+            return if (matches) WebViewNavigationAction.ALLOW else WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+        }
+
+        // 5. Block trending / gaming / feed / hashtags / explore tabs
+        if (path.startsWith("feed/") ||
+            path == "feed" ||
+            path.startsWith("gaming") ||
+            path.startsWith("hashtag") ||
+            path.startsWith("podcasts") ||
+            path.startsWith("playables") ||
+            path.startsWith("sports") ||
+            path.startsWith("fashion") ||
+            path.startsWith("redirect")
+        ) {
+            return WebViewNavigationAction.BLOCK_OTHER_CHANNEL
+        }
+
+        // 6. In strict Study Player WebView, allow only /watch and /playlist (verified by player owner check)
+        if (strictStudyWebView) {
+            val isWatchOrPlaylist = path == "watch" ||
+                path.startsWith("watch/") ||
+                path == "playlist" ||
+                path.startsWith("playlist/") ||
+                path.startsWith("embed/")
+            return if (isWatchOrPlaylist) WebViewNavigationAction.ALLOW else WebViewNavigationAction.BLOCK_OTHER_CHANNEL
         }
 
         return WebViewNavigationAction.ALLOW

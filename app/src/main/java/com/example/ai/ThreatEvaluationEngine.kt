@@ -157,8 +157,20 @@ class ThreatEvaluationEngine(private val customContext: Context? = null) {
         // -----------------------------------------------------------------
         if (ablationMode == ThreatAblationMode.CLOUD_LLM_ONLY) {
             val tStart = System.currentTimeMillis()
-            val apiKey = BuildConfig.GEMINI_API_KEY.ifBlank { "YOUR_GEMINI_API_KEY" }
-            val cloudRes = evaluateWithGemini(apiKey, appName, contentTitle, extractedText)
+            val apiKey = BuildConfig.GEMINI_API_KEY.trim()
+            val hasValidGeminiKey = apiKey.isNotBlank() &&
+                apiKey != "YOUR_GEMINI_API_KEY" &&
+                apiKey != "MY_GEMINI_API_KEY" &&
+                apiKey != "your_api_key_here"
+            val cloudRes = if (hasValidGeminiKey) {
+                try {
+                    evaluateWithGemini(apiKey, appName, contentTitle, extractedText)
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
             val elapsed = System.currentTimeMillis() - tStart
             if (cloudRes != null) {
                 trace.add(
@@ -290,10 +302,14 @@ class ThreatEvaluationEngine(private val customContext: Context? = null) {
         // STAGE 3: Layer 3 - Server-Side / Cloud Gemini 3.5 Flash Reasoning
         // -----------------------------------------------------------------
         val tL3Start = System.currentTimeMillis()
-        val apiKey = BuildConfig.GEMINI_API_KEY.ifBlank { "YOUR_GEMINI_API_KEY" }
+        val apiKey = BuildConfig.GEMINI_API_KEY.trim()
+        val hasValidGeminiKey = apiKey.isNotBlank() &&
+            apiKey != "YOUR_GEMINI_API_KEY" &&
+            apiKey != "MY_GEMINI_API_KEY" &&
+            apiKey != "your_api_key_here"
 
         var finalL3Result: ThreatAnalysisResult? = null
-        if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY" && apiKey != "your_api_key_here") {
+        if (hasValidGeminiKey) {
             try {
                 finalL3Result = evaluateWithGemini(apiKey, appName, contentTitle, extractedText)
             } catch (_: Exception) {}
@@ -537,7 +553,7 @@ class ThreatEvaluationEngine(private val customContext: Context? = null) {
             "gender" -> "Gender / Sexism"
             "religion" -> "Religious Harassment"
             "age" -> "Ageism / Age Harassment"
-            "not_cyberbullying" -> ""
+            "not_cyberbullying", "not_cybepprbullying" -> ""
             else -> pred2.label.replaceFirstChar { it.uppercase() }
         }
 

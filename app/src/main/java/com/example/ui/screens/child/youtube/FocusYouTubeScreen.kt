@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -117,18 +118,18 @@ fun FocusYouTubeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var shieldBlockedNotice by remember { mutableStateOf<String?>(null) }
 
-    if (activeChannelForView != null && activeUrlForView != null) {
+    val allowedOnlyChannels = remember(channels) {
+        channels.filter { it.isAllowed }.distinctBy { it.channelId }
+    }
+
+    if (activeChannelForView != null && activeUrlForView != null && activeChannelForView!!.isAllowed) {
         BackHandler {
             activeChannelForView = null
             activeUrlForView = null
         }
-        val activePool = remember(channels, activeChannelForView) {
-            (channels.filter { it.isAllowed } + listOfNotNull(activeChannelForView))
-                .distinctBy { it.channelId }
-        }
         RealYouTubeChannelFullView(
             channel = activeChannelForView!!,
-            allowedChannels = activePool,
+            allowedChannels = allowedOnlyChannels,
             initialUrl = activeUrlForView!!,
             onClose = {
                 activeChannelForView = null
@@ -141,7 +142,7 @@ fun FocusYouTubeScreen(
                 shieldBlockedNotice = if (blockedName.isNotBlank()) {
                     "'$blockedName' is blocked. Only your allowed study channels are permitted."
                 } else {
-                    "Only your allowed study channels are permitted. Navigation to other channels is blocked."
+                    "Only your allowed study channels and playlists are permitted inside Study YT."
                 }
             }
         )
@@ -279,11 +280,14 @@ fun FocusYouTubeScreen(
                 }
 
                 items(searchResults) { result ->
-                    val alreadyAllowed = channels.any {
-                        it.channelName.equals(result.title, ignoreCase = true) ||
-                        it.handle.equals(result.handle, ignoreCase = true) ||
-                        it.channelId == result.channelId
+                    val matchedAllowedChannel = channels.firstOrNull { ch ->
+                        ch.isAllowed && (
+                            ch.channelId == result.channelId ||
+                                (result.handle.isNotBlank() && ch.handle.equals(result.handle, ignoreCase = true)) ||
+                                ch.channelName.equals(result.title, ignoreCase = true)
+                            )
                     }
+                    val alreadyAllowed = matchedAllowedChannel != null
 
                     YouTubeSearchResultCard(
                         result = result,
@@ -292,18 +296,16 @@ fun FocusYouTubeScreen(
                             onAddChannelFromSearch(result)
                         },
                         onViewVideos = {
-                            val tempChannel = AllowedYouTubeChannelEntity(
-                                channelId = result.channelId,
-                                childId = childId,
-                                channelName = result.title,
-                                handle = result.handle,
-                                description = result.description,
-                                avatarUrl = result.avatarUrl,
-                                channelUrl = result.channelUrl,
-                                isAllowed = true
-                            )
-                            activeChannelForView = tempChannel
-                            activeUrlForView = "${result.channelUrl}/playlists"
+                            if (matchedAllowedChannel != null) {
+                                val handleClean = matchedAllowedChannel.handle.removePrefix("@").trim()
+                                val safeBaseUrl = matchedAllowedChannel.channelUrl.ifBlank {
+                                    "https://m.youtube.com/@$handleClean"
+                                }
+                                activeChannelForView = matchedAllowedChannel
+                                activeUrlForView = if (safeBaseUrl.contains("/playlists")) safeBaseUrl else "$safeBaseUrl/playlists"
+                            } else {
+                                shieldBlockedNotice = "'${result.title}' is not in your allowed channels. Tap 'Allow Channel' first to watch its study videos."
+                            }
                         }
                     )
                 }
@@ -324,7 +326,7 @@ fun FocusYouTubeScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (channels.isEmpty()) "No channels allowed yet — search above to add one!" else "${channels.count { it.isAllowed }} active for study",
+                            text = if (allowedOnlyChannels.isEmpty()) "No channels allowed yet — search above to add one!" else "${allowedOnlyChannels.size} active for study",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -333,7 +335,7 @@ fun FocusYouTubeScreen(
             }
 
             // 6. Allowed Channels List
-            if (channels.isEmpty()) {
+            if (allowedOnlyChannels.isEmpty()) {
                 item {
                     ReGainEmptyChannelsPlaceholder(
                         onQuickSearch = { suggested ->
@@ -343,18 +345,22 @@ fun FocusYouTubeScreen(
                     )
                 }
             } else {
-                items(channels) { channel ->
+                items(allowedOnlyChannels) { channel ->
                     AllowedChannelCard(
                         channel = channel,
                         onViewVideos = {
-                            val handleClean = channel.handle.removePrefix("@").trim()
-                            val url = if (channel.channelUrl.isNotBlank()) {
-                                if (channel.channelUrl.contains("/playlists")) channel.channelUrl else "${channel.channelUrl}/playlists"
+                            if (channel.isAllowed) {
+                                val handleClean = channel.handle.removePrefix("@").trim()
+                                val url = if (channel.channelUrl.isNotBlank()) {
+                                    if (channel.channelUrl.contains("/playlists")) channel.channelUrl else "${channel.channelUrl}/playlists"
+                                } else {
+                                    "https://m.youtube.com/@$handleClean/playlists"
+                                }
+                                activeChannelForView = channel
+                                activeUrlForView = url
                             } else {
-                                "https://m.youtube.com/@$handleClean/playlists"
+                                shieldBlockedNotice = "'${channel.channelName}' is currently paused from study channels."
                             }
-                            activeChannelForView = channel
-                            activeUrlForView = url
                         },
                         onRemove = {
                             onRemoveChannel(channel.channelId)
@@ -501,7 +507,7 @@ private fun YouTubeSearchResultCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Action Row: "Allow Channel" + "View Videos"
+            // Action Row: "Allow Channel" + "View Videos" (locked until channel is allowed)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -523,6 +529,19 @@ private fun YouTubeSearchResultCard(
                             Text("Allowed ✓", color = EmeraldSafe, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
+
+                    OutlinedButton(
+                        onClick = onViewVideos,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("yt_btn_view_videos_${result.title.replace(" ", "_")}")
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.FeaturedPlayList, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("View Videos", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 } else {
                     Button(
                         onClick = onAdd,
@@ -537,19 +556,20 @@ private fun YouTubeSearchResultCard(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Allow Channel", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
-                }
 
-                OutlinedButton(
-                    onClick = onViewVideos,
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(40.dp)
-                        .testTag("yt_btn_view_videos_${result.title.replace(" ", "_")}")
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.FeaturedPlayList, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("View Videos", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    OutlinedButton(
+                        onClick = onViewVideos,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CoralDanger),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .testTag("yt_btn_view_videos_${result.title.replace(" ", "_")}")
+                    ) {
+                        Icon(Icons.Default.Lock, contentDescription = "Locked until allowed", modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Allow First", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -705,8 +725,12 @@ fun RealYouTubeChannelFullView(
     var canGoBack by remember { mutableStateOf(false) }
 
     val handleClean = channel.handle.removePrefix("@").trim()
+    val fallbackSafeUrl = remember(initialUrl, handleClean) {
+        if (handleClean.isNotBlank()) "https://m.youtube.com/@$handleClean/playlists" else initialUrl
+    }
     val allowedTokens = remember(allowedChannels) {
-        allowedChannels.flatMap { com.example.service.YouTubeContentGuard.extractChannelTokens(it) }
+        allowedChannels.filter { it.isAllowed }
+            .flatMap { com.example.service.YouTubeContentGuard.extractChannelTokens(it) }
             .distinct()
     }
 
@@ -763,10 +787,12 @@ fun RealYouTubeChannelFullView(
                                 Icon(Icons.Default.Verified, contentDescription = null, tint = EmeraldSafe, modifier = Modifier.size(14.dp))
                             }
                             Text(
-                                text = "Only ${channel.channelName} • Shorts & Other Channels Blocked",
+                                text = "Only ${channel.channelName} • Search, Shorts & Other Channels Blocked",
                                 fontSize = 11.sp,
                                 color = EmeraldSafe,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -864,19 +890,44 @@ fun RealYouTubeChannelFullView(
                         settings.displayZoomControls = false
                         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
+                        var lastBlockedAtMs = 0L
+
+                        fun returnToSafeChannel(view: WebView?) {
+                            if (view == null) return
+                            view.stopLoading()
+                            val history = view.copyBackForwardList()
+                            var targetUrl: String? = null
+                            for (idx in history.currentIndex - 1 downTo 0) {
+                                val candidate = history.getItemAtIndex(idx)?.url.orEmpty()
+                                val guardResult = com.example.service.YouTubeContentGuard.checkStudyWebViewUrl(candidate, allowedChannels)
+                                val isWatch = candidate.contains("/watch", ignoreCase = true)
+                                if (guardResult == com.example.service.WebViewNavigationAction.ALLOW && !isWatch) {
+                                    targetUrl = candidate
+                                    break
+                                }
+                            }
+                            view.loadUrl(targetUrl ?: fallbackSafeUrl)
+                        }
+
+                        fun notifyBlockedOnce(action: () -> Unit) {
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastBlockedAtMs > 700L) {
+                                lastBlockedAtMs = now
+                                action()
+                            }
+                        }
+
                         val bridge = YouTubeShieldJsBridge(
                             onShortsTriggered = {
                                 post {
-                                    stopLoading()
-                                    if (canGoBack()) goBack() else loadUrl(initialUrl)
-                                    onShortsBlocked()
+                                    returnToSafeChannel(this)
+                                    notifyBlockedOnce { onShortsBlocked() }
                                 }
                             },
                             onChannelTriggered = { detectedName ->
                                 post {
-                                    stopLoading()
-                                    if (canGoBack()) goBack() else loadUrl(initialUrl)
-                                    onChannelBlocked(detectedName)
+                                    returnToSafeChannel(this)
+                                    notifyBlockedOnce { onChannelBlocked(detectedName) }
                                 }
                             }
                         )
@@ -891,24 +942,35 @@ fun RealYouTubeChannelFullView(
 
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 isLoading = newProgress < 85
-                                if (newProgress > 50) {
+                                if (newProgress > 25) {
                                     injectReGainDistractionBlocker(view, allowedTokens)
                                 }
                             }
                         }
 
-                        fun handleUrlGuard(view: WebView?, url: String): Boolean {
-                            val decision = com.example.service.YouTubeContentGuard.checkWebUrl(url, allowedChannels)
+                        fun handleUrlGuard(view: WebView?, url: String, isMainFrame: Boolean = true): Boolean {
+                            val decision = com.example.service.YouTubeContentGuard.checkStudyWebViewUrl(url, allowedChannels)
                             return when (decision) {
                                 com.example.service.WebViewNavigationAction.BLOCK_SHORTS -> {
-                                    view?.stopLoading()
-                                    onShortsBlocked()
+                                    if (isMainFrame) {
+                                        view?.stopLoading()
+                                        notifyBlockedOnce { onShortsBlocked() }
+                                    }
                                     true
                                 }
                                 com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL -> {
-                                    view?.stopLoading()
-                                    val blockedSlug = url.substringAfter("youtube.com/").substringBefore("/").substringBefore("?")
-                                    onChannelBlocked(blockedSlug)
+                                    if (isMainFrame) {
+                                        view?.stopLoading()
+                                        val blockedLabel = if (url.contains("/results", ignoreCase = true)) {
+                                            "YouTube Search"
+                                        } else {
+                                            url.substringAfter("youtube.com/", url)
+                                                .substringBefore("/")
+                                                .substringBefore("?")
+                                                .ifBlank { "YouTube Home" }
+                                        }
+                                        notifyBlockedOnce { onChannelBlocked(blockedLabel) }
+                                    }
                                     true
                                 }
                                 com.example.service.WebViewNavigationAction.ALLOW -> false
@@ -918,16 +980,17 @@ fun RealYouTubeChannelFullView(
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url?.toString().orEmpty()
-                                if (handleUrlGuard(view, url)) return true
-                                currentUrl = url
+                                val isMainFrame = request?.isForMainFrame ?: true
+                                if (handleUrlGuard(view, url, isMainFrame)) return true
+                                if (isMainFrame) currentUrl = url
                                 return false
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                 super.doUpdateVisitedHistory(view, url, isReload)
                                 val safeUrl = url.orEmpty()
-                                if (handleUrlGuard(view, safeUrl)) {
-                                    if (view?.canGoBack() == true) view.goBack() else view?.loadUrl(initialUrl)
+                                if (handleUrlGuard(view, safeUrl, isMainFrame = true)) {
+                                    returnToSafeChannel(view)
                                     return
                                 }
                                 currentUrl = safeUrl
@@ -937,18 +1000,24 @@ fun RealYouTubeChannelFullView(
 
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 val safeUrl = url.orEmpty()
-                                if (handleUrlGuard(view, safeUrl)) {
-                                    if (view?.canGoBack() == true) view.goBack() else view?.loadUrl(initialUrl)
+                                if (handleUrlGuard(view, safeUrl, isMainFrame = true)) {
+                                    returnToSafeChannel(view)
                                     return
                                 }
                                 isLoading = true
                                 currentUrl = safeUrl
                                 canGoBack = view?.canGoBack() == true
+                                injectReGainDistractionBlocker(view, allowedTokens)
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
-                                currentUrl = url.orEmpty()
+                                val safeUrl = url.orEmpty()
+                                if (handleUrlGuard(view, safeUrl, isMainFrame = true)) {
+                                    returnToSafeChannel(view)
+                                    return
+                                }
+                                currentUrl = safeUrl
                                 canGoBack = view?.canGoBack() == true
                                 injectReGainDistractionBlocker(view, allowedTokens)
                             }
@@ -1158,10 +1227,21 @@ private fun injectReGainDistractionBlocker(
                 ytd-rich-shelf-renderer[is-shorts],
                 .ytm-reel-shelf-renderer,
                 .reel-shelf,
-                ytm-pivot-bar-item-renderer:nth-child(2) {
+                ytm-mobile-topbar-renderer button[aria-label*="Search" i],
+                ytm-mobile-topbar-renderer [icon-name="SEARCH"],
+                ytm-searchbox,
+                ytd-searchbox,
+                #search-icon-legacy,
+                #search-button,
+                form[action="/results"],
+                ytm-home-logo,
+                ytm-mobile-topbar-renderer a[href="/"],
+                ytm-pivot-bar-renderer,
+                ytm-pivot-bar-item-renderer {
                     display: none !important;
                     visibility: hidden !important;
                     height: 0 !important;
+                    pointer-events: none !important;
                 }
             `;
             var style = document.getElementById('regain-focus-blocker');
@@ -1170,16 +1250,19 @@ private fun injectReGainDistractionBlocker(
                 style.id = 'regain-focus-blocker';
                 style.type = 'text/css';
                 style.appendChild(document.createTextNode(css));
-                document.head.appendChild(style);
+                (document.head || document.documentElement).appendChild(style);
             }
 
             var allowed = $jsonTokens;
+            window.__focusAllowedTokens = allowed;
+
             function isAllowedText(txt) {
-                if (!txt || allowed.length === 0) return false;
+                var list = window.__focusAllowedTokens || [];
+                if (!txt || list.length === 0) return false;
                 var lower = txt.toLowerCase();
                 var compact = lower.replace(/[^a-z0-9]/g, '');
-                for (var i = 0; i < allowed.length; i++) {
-                    var tok = allowed[i].toLowerCase();
+                for (var i = 0; i < list.length; i++) {
+                    var tok = list[i].toLowerCase();
                     if (tok.length < 2) continue;
                     if (lower.indexOf(tok) !== -1) return true;
                     var tokCompact = tok.replace(/[^a-z0-9]/g, '');
@@ -1188,29 +1271,213 @@ private fun injectReGainDistractionBlocker(
                 return false;
             }
 
-            function inspectCurrentPage() {
-                var href = (window.location.href || '').toLowerCase();
-                if (href.indexOf('/shorts/') !== -1) {
-                    if (window.AndroidFocusBridge) window.AndroidFocusBridge.onShortsDetected();
-                    return;
+            function pauseAllMedia() {
+                try {
+                    document.querySelectorAll('video, audio').forEach(function(m) {
+                        m.pause();
+                        m.muted = true;
+                    });
+                } catch (e) {}
+            }
+
+            var lastTriggerTs = 0;
+            function triggerShorts() {
+                pauseAllMedia();
+                var now = Date.now();
+                if (now - lastTriggerTs < 650) return;
+                lastTriggerTs = now;
+                if (window.AndroidFocusBridge) window.AndroidFocusBridge.onShortsDetected();
+            }
+
+            function triggerChannel(name) {
+                pauseAllMedia();
+                var now = Date.now();
+                if (now - lastTriggerTs < 650) return;
+                lastTriggerTs = now;
+                if (window.AndroidFocusBridge) window.AndroidFocusBridge.onOtherChannelDetected(name || 'Other Channel');
+            }
+
+            function checkBlockedUrl(rawUrl) {
+                if (!rawUrl) return null;
+                var lower = String(rawUrl).toLowerCase();
+                if (lower.indexOf('/shorts/') !== -1 || lower.indexOf('/shorts?') !== -1 || lower.endsWith('/shorts')) {
+                    return { type: 'shorts', label: 'Shorts' };
                 }
-                if (href.indexOf('/watch') !== -1) {
-                    var ownerEl = document.querySelector('ytm-slim-owner-renderer .slim-owner-channel-name, ytm-slim-owner-renderer a[href*="/@"], #owner-name a, ytd-channel-name a');
-                    if (ownerEl) {
-                        var ownerName = (ownerEl.innerText || ownerEl.textContent || '').trim();
-                        var ownerHref = (ownerEl.getAttribute('href') || '').toLowerCase();
-                        if (ownerName && !isAllowedText(ownerName) && !isAllowedText(ownerHref)) {
-                            if (window.AndroidFocusBridge) window.AndroidFocusBridge.onOtherChannelDetected(ownerName);
+                if (lower.indexOf('youtube.com/results') !== -1 || lower.startsWith('/results')) {
+                    return { type: 'channel', label: 'YouTube Search' };
+                }
+                if (lower.indexOf('/feed/') !== -1 || lower.indexOf('/gaming') !== -1 || lower.indexOf('/hashtag') !== -1) {
+                    return { type: 'channel', label: 'Unapproved Feed' };
+                }
+                try {
+                    var parsed = new URL(lower, window.location.origin);
+                    var p = (parsed.pathname || '').replace(/^\/+|\/+$/g, '');
+                    if (p === '' && parsed.hostname.indexOf('youtube.com') !== -1) {
+                        return { type: 'channel', label: 'YouTube Home' };
+                    }
+                    if (p.startsWith('@') || p.startsWith('channel/') || p.startsWith('c/') || p.startsWith('user/')) {
+                        var slug = p.startsWith('@') ? p.split('/')[0] : (p.split('/')[1] || '');
+                        if (slug && !isAllowedText(slug)) {
+                            return { type: 'channel', label: slug };
                         }
                     }
+                } catch (e) {}
+                return null;
+            }
+
+            var watchTrack = { id: '', mountedAt: 0 };
+
+            function inspectCurrentPage() {
+                var href = (window.location.href || '');
+                var urlBlock = checkBlockedUrl(href);
+                if (urlBlock) {
+                    if (urlBlock.type === 'shorts') triggerShorts();
+                    else triggerChannel(urlBlock.label);
+                    return;
+                }
+
+                var lowerHref = href.toLowerCase();
+                if (lowerHref.indexOf('/playlist') !== -1) {
+                    var plOwner = document.querySelector('ytm-playlist-header-renderer a[href*="/@"], ytm-playlist-header-renderer a[href*="/channel/"], ytm-playlist-header-renderer .playlist-header-owner-name, #owner-text a');
+                    if (plOwner) {
+                        var plName = (plOwner.innerText || plOwner.textContent || '').trim();
+                        var plHref = (plOwner.getAttribute('href') || '').toLowerCase();
+                        if ((plName || plHref) && !isAllowedText(plName) && !isAllowedText(plHref)) {
+                            triggerChannel(plName || 'Other Playlist');
+                            return;
+                        }
+                    }
+                }
+
+                if (lowerHref.indexOf('/watch') !== -1) {
+                    var videoId = '';
+                    try { videoId = new URLSearchParams(window.location.search).get('v') || ''; } catch (e) {}
+                    if (watchTrack.id !== videoId) {
+                        watchTrack = { id: videoId, mountedAt: 0 };
+                    }
+
+                    // 1. Fresh ytInitialPlayerResponse matching the exact active videoId
+                    var vd = window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.videoDetails;
+                    if (vd && (!videoId || vd.videoId === videoId)) {
+                        var vdAuthor = vd.author || '';
+                        var vdChannelId = vd.channelId || '';
+                        if ((vdAuthor || vdChannelId) && !isAllowedText(vdAuthor) && !isAllowedText(vdChannelId)) {
+                            triggerChannel(vdAuthor || vdChannelId);
+                            return;
+                        }
+                        if (isAllowedText(vdAuthor) || isAllowedText(vdChannelId)) {
+                            return;
+                        }
+                    }
+
+                    // 2. Active video owner DOM header (excludes related/up-next cards)
+                    var ownerSelectors = [
+                        'ytm-slim-owner-renderer',
+                        'ytm-video-owner-renderer',
+                        'ytm-slim-video-metadata-section-renderer ytm-channel-name',
+                        '#owner-name',
+                        'ytd-video-owner-renderer ytd-channel-name',
+                        'ytd-channel-name'
+                    ].join(', ');
+                    var ownerEls = document.querySelectorAll(ownerSelectors);
+                    var foundAnyOwnerInfo = false;
+                    for (var j = 0; j < ownerEls.length; j++) {
+                        var el = ownerEls[j];
+                        if (el.closest('ytm-item-section-renderer[section-identifier="related-items"], ytm-watch-next-secondary-results-renderer, #related')) {
+                            continue;
+                        }
+                        var oText = (el.innerText || el.textContent || '').trim();
+                        var linkEl = el.tagName === 'A' ? el : el.querySelector('a[href]');
+                        var oHref = linkEl ? (linkEl.getAttribute('href') || '') : '';
+                        if (oText || oHref) {
+                            foundAnyOwnerInfo = true;
+                            if (isAllowedText(oText) || isAllowedText(oHref)) {
+                                return;
+                            }
+                            triggerChannel(oText || oHref);
+                            return;
+                        }
+                    }
+
+                    // 3. Fail-closed safety check once watch metadata container has mounted
+                    var watchMounted = document.querySelector('ytm-slim-video-metadata-section-renderer, ytm-watch, ytd-watch-flexy');
+                    if (watchMounted && !foundAnyOwnerInfo) {
+                        if (watchTrack.mountedAt === 0) {
+                            watchTrack.mountedAt = Date.now();
+                        } else if (Date.now() - watchTrack.mountedAt > 3000) {
+                            triggerChannel('Unverified Video');
+                        }
+                    }
+                } else {
+                    watchTrack = { id: '', mountedAt: 0 };
                 }
             }
 
             if (!window.__focusSenseHooked) {
                 window.__focusSenseHooked = true;
-                window.addEventListener('yt-navigate-finish', function() { setTimeout(inspectCurrentPage, 250); });
-                window.addEventListener('popstate', function() { setTimeout(inspectCurrentPage, 250); });
-                setInterval(inspectCurrentPage, 1200);
+
+                var origPushState = history.pushState;
+                history.pushState = function(state, title, url) {
+                    var blocked = checkBlockedUrl(url);
+                    if (blocked) {
+                        if (blocked.type === 'shorts') triggerShorts();
+                        else triggerChannel(blocked.label);
+                        return;
+                    }
+                    var res = origPushState.apply(this, arguments);
+                    setTimeout(inspectCurrentPage, 150);
+                    return res;
+                };
+
+                var origReplaceState = history.replaceState;
+                history.replaceState = function(state, title, url) {
+                    var blocked = checkBlockedUrl(url);
+                    if (blocked) {
+                        if (blocked.type === 'shorts') triggerShorts();
+                        else triggerChannel(blocked.label);
+                        return;
+                    }
+                    var res = origReplaceState.apply(this, arguments);
+                    setTimeout(inspectCurrentPage, 150);
+                    return res;
+                };
+
+                document.addEventListener('submit', function(e) {
+                    var form = e.target;
+                    var action = (form && form.getAttribute && form.getAttribute('action')) || '';
+                    if (action.toLowerCase().indexOf('results') !== -1 || (form && form.querySelector && form.querySelector('input[name="search_query"]'))) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerChannel('YouTube Search');
+                    }
+                }, true);
+
+                document.addEventListener('click', function(e) {
+                    var target = e.target;
+                    if (!target || !target.closest) return;
+                    if (target.closest('ytm-searchbox, ytd-searchbox, form[action="/results"], button[aria-label*="Search" i]')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerChannel('YouTube Search');
+                        return;
+                    }
+                    var anchor = target.closest('a[href]');
+                    if (anchor) {
+                        var blocked = checkBlockedUrl(anchor.getAttribute('href'));
+                        if (blocked) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (blocked.type === 'shorts') triggerShorts();
+                            else triggerChannel(blocked.label);
+                        }
+                    }
+                }, true);
+
+                document.addEventListener('play', function() { setTimeout(inspectCurrentPage, 100); }, true);
+                window.addEventListener('yt-navigate-finish', function() { setTimeout(inspectCurrentPage, 150); });
+                window.addEventListener('yt-page-data-updated', function() { setTimeout(inspectCurrentPage, 150); });
+                window.addEventListener('popstate', function() { setTimeout(inspectCurrentPage, 150); });
+                setInterval(inspectCurrentPage, 400);
             }
             inspectCurrentPage();
         })();

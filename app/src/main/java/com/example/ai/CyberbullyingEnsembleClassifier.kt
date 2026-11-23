@@ -143,7 +143,9 @@ class CyberbullyingEnsembleClassifier(context: Context) {
         val bestLabel = labels.getOrElse(bestIndex) { "not_cyberbullying" }
         val confidence = probs[bestIndex]
 
-        val isCyberbullying = bestLabel != "not_cyberbullying" && confidence >= 0.45f
+        val isBenignLabel = bestLabel.equals("not_cyberbullying", ignoreCase = true) ||
+            bestLabel.equals("not_cybepprbullying", ignoreCase = true)
+        val isCyberbullying = !isBenignLabel && confidence >= 0.45f
 
         return Model2Prediction(
             label = bestLabel,

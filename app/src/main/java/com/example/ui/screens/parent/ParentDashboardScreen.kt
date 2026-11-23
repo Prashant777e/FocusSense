@@ -1187,14 +1187,14 @@ private fun LiveLocationMapTab(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = latestLocation?.locationName ?: "Safe Haven (Home)",
+                                    text = latestLocation?.locationName ?: "No GPS Fix Recorded Yet",
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Active GPS Beacon • Online",
+                                    text = if (latestLocation != null) "Active GPS Beacon • Online" else "Waiting for Child GPS Beacon",
                                     fontSize = 11.sp,
-                                    color = EmeraldSafe,
+                                    color = if (latestLocation != null) EmeraldSafe else AmberWarning,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -1202,13 +1202,13 @@ private fun LiveLocationMapTab(
 
                         Surface(
                             shape = RoundedCornerShape(10.dp),
-                            color = EmeraldSafeBg
+                            color = if (latestLocation != null) EmeraldSafeBg else AmberWarningBg
                         ) {
                             Text(
-                                text = "Inside Safe Zone",
+                                text = if (latestLocation != null) "GPS Active" else "Pending Fix",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = EmeraldSafe,
+                                color = if (latestLocation != null) EmeraldSafe else AmberWarning,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
@@ -1224,21 +1224,34 @@ private fun LiveLocationMapTab(
                     ) {
                         Column {
                             Text(text = "LATITUDE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                            Text(text = "${latestLocation?.latitude ?: 37.7690}° N", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = latestLocation?.let { String.format(Locale.US, "%.4f°", it.latitude) } ?: "--",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                         Column {
                             Text(text = "LONGITUDE", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                            Text(text = "${latestLocation?.longitude ?: -122.4467}° W", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = latestLocation?.let { String.format(Locale.US, "%.4f°", it.longitude) } ?: "--",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                         Column {
                             Text(text = "GPS ACCURACY", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                            Text(text = "${latestLocation?.accuracy ?: 4.5f}m Precision", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = latestLocation?.let { "${it.accuracy}m Precision" } ?: "--",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Last Updated: ${dateFormat.format(Date(latestLocation?.recordedAt ?: System.currentTimeMillis()))}",
+                        text = latestLocation?.let { "Last Updated: ${dateFormat.format(Date(it.recordedAt))}" }
+                            ?: "No fix synced yet. Tap 'Ping GPS' to pull the latest location from Supabase.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1246,7 +1259,7 @@ private fun LiveLocationMapTab(
             }
         }
 
-        // Quick GPS Simulation Buttons for Testing
+        // Cloud GPS Sync Info Card
         item {
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -1255,46 +1268,18 @@ private fun LiveLocationMapTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Simulate Location Check-in",
+                        text = "Child Device GPS Synchronization",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         color = IndigoPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Test instant GPS updates across family locations:",
+                        text = "The child's foreground LocationTrackingService uploads GPS fixes every 5 minutes to Supabase PostgreSQL. Tap 'Ping GPS' above anytime to fetch the newest fix immediately.",
                         fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 17.sp
                     )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { onRefreshLocation() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("🏫 School", fontSize = 11.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { onRefreshLocation() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("📚 Library", fontSize = 11.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { onRefreshLocation() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text("⚽ Park", fontSize = 11.sp)
-                        }
-                    }
                 }
             }
         }
@@ -1757,7 +1742,7 @@ private fun AcademicThreatLabSuite(serverUrl: String) {
     var geminiConfigured by remember { mutableStateOf(true) }
     var activeModel by remember { mutableStateOf("gemini-3.5-flash") }
     var activeEndpoint by remember { mutableStateOf("Gemini 3.5 Flash Cloud AI") }
-    var configGeminiKey by remember { mutableStateOf("YOUR_GEMINI_API_KEY") }
+    var configGeminiKey by remember { mutableStateOf("") }
     var configModel by remember { mutableStateOf("gemini-3.5-flash") }
     var isSavingConfig by remember { mutableStateOf(false) }
     var configSaveMessage by remember { mutableStateOf<String?>(null) }

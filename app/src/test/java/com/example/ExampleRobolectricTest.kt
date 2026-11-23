@@ -284,6 +284,72 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `study webview url guard blocks search, home, feeds, shorts, and unapproved channels`() {
+    val allowed = listOf(
+      com.example.data.model.AllowedYouTubeChannelEntity(
+        channelId = "striver",
+        childId = "child-default",
+        channelName = "take U forward",
+        handle = "@takeUforward",
+        channelUrl = "https://m.youtube.com/@takeUforward",
+        isAllowed = true
+      )
+    )
+
+    // In-player search for games / unapproved creators must ALWAYS be blocked
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/results?search_query=techno+gamerz", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://www.youtube.com/results?search_query=gta+gameplay", allowed)
+    )
+
+    // Root homepage, feeds, gaming, and unapproved channel URLs must be blocked
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/feed/subscriptions", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_OTHER_CHANNEL,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/@TechnoGamerzOfficial", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.BLOCK_SHORTS,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/shorts/gameclip123", allowed)
+    )
+
+    // Allowed channel tabs & watch/playlist routes remain permitted
+    assertEquals(
+      com.example.service.WebViewNavigationAction.ALLOW,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/@takeUforward/playlists", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.ALLOW,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/@takeUforward/videos", allowed)
+    )
+    assertEquals(
+      com.example.service.WebViewNavigationAction.ALLOW,
+      com.example.service.YouTubeContentGuard.checkStudyWebViewUrl("https://m.youtube.com/watch?v=abc123", allowed)
+    )
+
+    // Browser guard also blocks unapproved game searches
+    val browserDecision = com.example.service.YouTubeContentGuard.evaluateBrowserYouTube(
+      urls = listOf("https://m.youtube.com/results?search_query=techno+gamerz"),
+      nodes = emptyList(),
+      allowedChannels = allowed,
+      enforceWhitelist = true
+    )
+    assertTrue("Browser search for unapproved creator must be blocked", browserDecision.shouldBlock)
+    assertEquals(com.example.service.YouTubeBlockReason.UNAPPROVED_CHANNEL, browserDecision.reason)
+  }
+
+  @Test
   fun `repository checks native youtube content restriction and parent pin end to end`() = kotlinx.coroutines.runBlocking {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val repository = com.example.data.repository.FocusSenseRepository(context)
